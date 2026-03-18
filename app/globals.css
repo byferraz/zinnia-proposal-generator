@@ -2,25 +2,27 @@
 
 :root {
   --background: #ffffff;
-  --foreground: #171717;
+  --foreground: #1B2035;
+
+  /* Zinnia Brand Colors */
+  --navy: #1B2035;
+  --navy-light: #2A3150;
+  --neon-green: #DFF266;
+  --white: #FFFFFF;
+  --gray: #E8EAF0;
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+  --color-navy: var(--navy);
+  --color-navy-light: var(--navy-light);
+  --color-neon-green: var(--neon-green);
+  --color-zinnia-gray: var(--gray);
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: Inter, system-ui, -apple-system, sans-serif;
 }
