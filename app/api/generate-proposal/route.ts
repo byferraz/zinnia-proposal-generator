@@ -5,52 +5,123 @@ import { scrapeWebsite } from "@/lib/scrapeWebsite";
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
-function getTemplate(
-  profile: ProposalFormData["prospectProfile"],
-  language: ProposalFormData["language"]
-): "A" | "B" | "C" {
-  if (language === "spanish") return "C";
-  if (profile === "no_digital_presence") return "A";
-  return "B";
-}
+// ─── Service groupings ────────────────────────────────────────────────────────
+// Which services trigger a Brand Strategy section (Phase 1)
+const BRAND_SERVICES = new Set([
+  "full_stack",
+  "linkedin_management",
+  "brand_manual",
+  "marketing_strategy",
+]);
 
-const SERVICE_LABELS: Record<string, string> = {
+// Which services trigger a LinkedIn Positioning section (Phase 2)
+const LINKEDIN_SERVICES = new Set([
+  "full_stack",
+  "linkedin_management",
+  "marketing_strategy",
+]);
+
+// Services that go in the Additional section (with their display names)
+const ADDITIONAL_SERVICE_LABELS: Record<string, string> = {
+  executive_positioning: "Executive Positioning (Individual)",
+  one_pager: "One Pager / Teaser Development",
+  brand_manual: "Brand Manual",
+  media_amplification: "Zinnia Media Amplification",
+  website_development: "Website Development",
+};
+
+const ALL_SERVICE_LABELS: Record<string, string> = {
   linkedin_management: "LinkedIn Management (Essential)",
   full_stack: "Full Stack (Brand + LinkedIn)",
   marketing_strategy: "Tailored Marketing Strategy & Plan",
   website_development: "Website Development",
-  executive_positioning: "Executive Positioning (individual)",
+  executive_positioning: "Executive Positioning (Individual)",
   one_pager: "One Pager / Teaser",
   brand_manual: "Brand Manual",
   media_amplification: "Zinnia Media Amplification",
 };
 
-// Real proposal examples for reference:
-// AlphaCircle: Phase 1 (brand guide) → Phase 2 (LinkedIn strategy + content mgmt) → Fee: $1,900/mo + Teaser $500
-// Anchor: same structure → Fee: $1,750/mo + Teaser $450
-// JX (Building Foundations): same → Fee: $2,700/mo + Teasers $800 each
-// Key: SHORT, bullet-point driven, specific timelines, no narrative fluff
+// ─── Derive which sections to generate ───────────────────────────────────────
+function deriveSections(formData: ProposalFormData) {
+  const services = formData.services;
+  const isSpanish = formData.language === "spanish";
 
-function buildSystemPrompt(template: "A" | "B" | "C"): string {
-  const realExampleEnglish = `
-REAL EXAMPLE (from actual Zinnia proposals — match this style exactly):
+  const needsBrand = services.some((s) => BRAND_SERVICES.has(s));
+  const needsLinkedIn = services.some((s) => LINKEDIN_SERVICES.has(s));
+  const additionalServices = services.filter(
+    (s) => ADDITIONAL_SERVICE_LABELS[s]
+  );
+  const customService = formData.customService?.trim();
 
-PHASE 1: ESSENTIAL BRAND STRATEGY ALIGNMENT
-- Strategic brand communication guide tailored to institutional allocators and family offices
-- Brand voice and messaging guidelines
-- Brand style guide development
-Estimated time of delivery: ~10 business days from kick-off date (incl. revision).
+  // If no brand/linkedin service, treat ALL selected services as additional
+  const hasCore = needsBrand || needsLinkedIn;
 
-PHASE 2: [PROSPECT NAME]'s POSITIONING – LINKEDIN ESSENTIALS
-Context strategy: LinkedIn is where 95% of asset & wealth management decision-makers learn, research, and consume content. We need to start with brand awareness stage.
+  return {
+    needsBrand,
+    needsLinkedIn,
+    additionalServices,
+    customService,
+    hasCore,
+    isSpanish,
+  };
+}
+
+// ─── Build dynamic system prompt ─────────────────────────────────────────────
+function buildSystemPrompt(
+  formData: ProposalFormData,
+  websiteContent: string | null
+): string {
+  const { needsBrand, needsLinkedIn, additionalServices, customService, hasCore, isSpanish } =
+    deriveSections(formData);
+
+  const hasWebsiteData = !!websiteContent;
+  const hasNotes = !!formData.notes?.trim();
+  const hasProfile = !!formData.prospectProfile;
+  const hasContext = hasWebsiteData || hasNotes || hasProfile;
+
+  const lang = isSpanish ? "Spanish" : "English";
+  const prospect = formData.prospectName;
+
+  // ── Construct list of XML tags Claude must return ────────────────────────
+  const requiredTags: string[] = [];
+  if (needsBrand) requiredTags.push(isSpanish ? "FASE1" : "PHASE1");
+  if (needsLinkedIn) requiredTags.push(isSpanish ? "FASE2" : "PHASE2");
+  if (additionalServices.length > 0 || customService) requiredTags.push("ADDITIONAL");
+  requiredTags.push("FEE_STRUCTURE");
+  requiredTags.push("CLOSING_NOTE");
+
+  // ── Instructions for each section ───────────────────────────────────────
+  const sectionInstructions: string[] = [];
+
+  if (needsBrand) {
+    const tag = isSpanish ? "FASE1" : "PHASE1";
+    const label = isSpanish
+      ? "Fase 1: Alineación Estratégica de Marca"
+      : "Phase 1: Essential Brand Strategy Alignment";
+    sectionInstructions.push(
+      `<${tag}> → ${label}
+- 3-5 bullet points of concrete brand deliverables tailored to ${prospect}'s industry
+- End with: "Estimated time of delivery: ~10 business days from kick-off date (incl. revision)."
+- NO generic filler. Reference ${hasContext ? "the specific context provided" : "their industry and profile"}.
+</${tag}>`
+    );
+  }
+
+  if (needsLinkedIn) {
+    const tag = isSpanish ? "FASE2" : "PHASE2";
+    const label = isSpanish
+      ? `Fase 2: Posicionamiento de ${prospect} – LinkedIn Essentials`
+      : `Phase 2: ${prospect}'s Positioning – LinkedIn Essentials`;
+    sectionInstructions.push(
+      `<${tag}> → ${label}
+Start with: "Context strategy: LinkedIn is where 95% of [their target audience] learn, research, and consume content."
+
+Then two sub-blocks:
 
 TAILORED LINKEDIN STRATEGY & PLAN
-Executive presentation including:
-- Positioning & Messaging (Core value prop, key differentiations)
-- Positioning plan
-- Content & Thought leadership strategy (incl. Strategic content calendar)
-- Performance metrics & optimization
-Estimated time of delivery: 10 business days since kick-off date of this phase incl Q&A phase.
+"Executive presentation including:"
+- 4 bullets: Positioning & Messaging, Positioning plan, Content & Thought leadership strategy, Performance metrics & optimization
+"Estimated time of delivery: 10 business days since kick-off date of this phase incl Q&A phase."
 
 STRATEGIC MARKETING & CONTENT DEVELOPMENT IMPLEMENTATION & OPTIMIZATION
 - Management and Execution of Content and Design
@@ -60,94 +131,141 @@ STRATEGIC MARKETING & CONTENT DEVELOPMENT IMPLEMENTATION & OPTIMIZATION
 - 7 monthly pieces for LinkedIn posts
 - 1 standard short-form video (mini-reel)
 - 1 monthly article or blog
-Estimated time of delivery: ongoing implementation.
+"Estimated time of delivery: ongoing implementation."
+</${tag}>`
+    );
+  }
 
-FEE STRUCTURE:
-FULL STACK ESSENTIAL PLAN (1 + 2): [PRICE] USD / mo
-Optimal Execution Plan: 6 months (minimum 3 mo).`;
+  // Additional services
+  const additionalList = [
+    ...additionalServices.map(
+      (s) => `- ${ADDITIONAL_SERVICE_LABELS[s]} (3-4 bullets + timeline)`
+    ),
+    ...(customService ? [`- ${customService} (3-4 bullets + timeline)`] : []),
+  ];
+  if (additionalList.length > 0) {
+    sectionInstructions.push(
+      `<ADDITIONAL> → One section per additional service selected:
+${additionalList.join("\n")}
+Format each: BOLD SERVICE NAME + bullets + "Estimated time of delivery: X"
+</ADDITIONAL>`
+    );
+  }
 
-  const base = `You are Leo Hsu, CEO of Zinnia Group (zinniagroup.io), specialized in asset & wealth management marketing.
+  // If no core (brand/linkedin) services and only additional — treat them all as main content
+  if (!hasCore) {
+    const allAsAdditional = formData.services
+      .map((s) => `- ${ALL_SERVICE_LABELS[s] || s} (4-5 bullets of deliverables + timeline)`)
+      .join("\n");
+    sectionInstructions.push(
+      `<ADDITIONAL> → Sections for each selected service:
+${allAsAdditional}
+${customService ? `- ${customService} (4-5 bullets + timeline)` : ""}
+Format each as: BOLD SERVICE NAME + bullets + timeline.
+</ADDITIONAL>`
+    );
+  }
+
+  const planName = needsBrand && needsLinkedIn
+    ? (isSpanish ? "PLAN FULL STACK ESENCIAL (1 + 2)" : "FULL STACK ESSENTIAL PLAN (1 + 2)")
+    : needsLinkedIn
+    ? (isSpanish ? "LINKEDIN MANAGEMENT ESENCIAL" : "LINKEDIN MANAGEMENT ESSENTIAL")
+    : needsBrand
+    ? (isSpanish ? "PLAN DE MARCA" : "BRAND STRATEGY PLAN")
+    : "";
+
+  const priceInstruction = formData.suggestedPrice
+    ? `Monthly price is $${formData.suggestedPrice} USD/mo — use this exact number.`
+    : "Choose a price appropriate to scope based on typical Zinnia pricing ($1,500–$3,500/mo range).";
+
+  sectionInstructions.push(
+    `<FEE_STRUCTURE> → Clear, scannable fee breakdown:
+${planName ? `${planName}: [PRICE] USD / mo` : ""}
+"Optimal Execution Plan: 6 months (minimum 3 mo)." (or minimum 1 mo if only one service)
+ONE-OFF ITEMS: (only if applicable)
+- List each additional service with its price (One Pager: $850–$1,200 / Executive Positioning: $700–$1,000 / Brand Manual: $1,500–$2,500)
+${priceInstruction}
+</FEE_STRUCTURE>`
+  );
+
+  sectionInstructions.push(
+    `<CLOSING_NOTE> → 1-2 sentences MAX. Confident, specific, no fluff.
+${hasContext ? "Reference something specific about the prospect from the context provided." : "Keep it general but compelling for their industry/profile."}
+Example style: "${prospect} has the credentials to lead thought leadership in [their space]. We'll transform [specific gap] into a competitive advantage."
+</CLOSING_NOTE>`
+  );
+
+  // ── Hallucination guard ──────────────────────────────────────────────────
+  const hallucinationGuard = hasContext
+    ? `You have context about ${prospect}. Use it. Reference specific details from their website, industry, or the notes provided. Do NOT invent numbers (AUM, clients, returns) that weren't mentioned.`
+    : `You have LIMITED context about ${prospect}. Do NOT invent specific facts (AUM figures, client counts, market positions, track records). Use language that fits any firm in their space: "institutional investors", "HNW clients", "their target audience", etc. The proposal must still be professional and specific to the selected services.`;
+
+  return `You are Leo Hsu, CEO of Zinnia Group (zinniagroup.io), a digital marketing agency specialized in asset & wealth management.
+
+LANGUAGE: Write everything in ${lang}.
 
 CRITICAL RULES:
-- Be CONCISE. Real proposals are 1-2 pages. No long paragraphs.
-- Use bullet points for all deliverables
-- Include specific timelines ("~10 business days", "ongoing")
-- Reference the prospect's name directly in Phase 2 title
-- Fee structure must be clear: "PLAN NAME: $X USD / mo" + minimum term
-- Add one-off items (One Pager, etc.) separately with their price
-- NO generic filler. Every line must be specific and useful.
-- ONLY include services that were selected by the user
-- Return ONLY XML tags as specified. No preamble.
+1. CONCISE — real Zinnia proposals are 1-2 pages. Short bullets, no narrative paragraphs.
+2. ONLY generate sections for the services actually selected. Do not add sections that weren't requested.
+3. ${hallucinationGuard}
+4. Use the prospect's name ${prospect} directly in section titles where appropriate.
+5. Return ONLY the XML tags listed below. No preamble, no explanation.
 
-${realExampleEnglish}`;
+REQUIRED OUTPUT — return ONLY these XML tags in this order:
+${requiredTags.map((t) => `<${t}>...</${t}>`).join("\n")}
 
-  if (template === "A") {
-    return `${base}
-
-Use Template A — "Building the Foundations". Return:
-<PHASE1>Phase 1: Essential Brand Strategy Alignment — bullet list of deliverables + timeline. Max 8 lines.</PHASE1>
-<PHASE2>Phase 2: [Prospect name]'s Positioning – LinkedIn Essentials — context sentence, then TAILORED LINKEDIN STRATEGY & PLAN section with bullets, then STRATEGIC MARKETING & CONTENT DEVELOPMENT section with bullets. Include specific monthly deliverables (X posts, X videos, etc.) based on selected services. Include timeline.</PHASE2>
-<ADDITIONAL>Any additional one-off services selected (One Pager, Brand Manual, Website, Media Amplification, Executive Positioning). Each with brief description and timeline. Leave empty if none.</ADDITIONAL>
-<FEE_STRUCTURE>FULL STACK ESSENTIAL PLAN (1 + 2): [price] USD / mo — Optimal Execution Plan: 6 months (minimum X mo). Then list any one-off items with price. Keep it short and scannable.</FEE_STRUCTURE>
-<CLOSING_NOTE>1-2 sentences max. A specific, confident closing statement about why now is the right time. No generic fluff.</CLOSING_NOTE>`;
-  }
-
-  if (template === "B") {
-    return `${base}
-
-Use Template B — "Full Stack". Same structure but include all selected phases. Return:
-<PHASE1>Phase 1: Essential Brand Strategy Alignment — bullet list of deliverables + timeline.</PHASE1>
-<PHASE2>Phase 2: [Prospect name]'s Positioning – LinkedIn Essentials — same structure as Template A Phase 2.</PHASE2>
-<ADDITIONAL>Any additional selected services (Marketing Strategy, One Pager, Brand Manual, Website, Media Amplification, Executive Positioning). Each with brief description and timeline. Leave empty if none.</ADDITIONAL>
-<FEE_STRUCTURE>Fee breakdown. Monthly plan name + price + term. One-off items listed separately.</FEE_STRUCTURE>
-<CLOSING_NOTE>1-2 sentences. Specific and confident.</CLOSING_NOTE>`;
-  }
-
-  // Template C — Spanish
-  return `${base}
-
-Use Template C — Spanish language. Write EVERYTHING in Spanish. Use the same concise, bullet-driven format.
-
-Return:
-<PHASE1>Fase 1: Alineación Estratégica de Marca — lista de entregables + tiempos. Máximo 8 líneas.</PHASE1>
-<PHASE2>Fase 2: Posicionamiento de [Nombre] – LinkedIn Essentials — misma estructura que Template A Fase 2 pero en español.</PHASE2>
-<ADDITIONAL>Servicios adicionales seleccionados (One Pager, etc.) con descripción breve y tiempo. Vacío si no hay ninguno.</ADDITIONAL>
-<FEE_STRUCTURE>Estructura de honorarios: plan mensual + precio + plazo. Items one-off separados.</FEE_STRUCTURE>
-<CLOSING_NOTE>1-2 oraciones de cierre. Específico y directo.</CLOSING_NOTE>`;
+SECTION INSTRUCTIONS:
+${sectionInstructions.join("\n\n")}`;
 }
 
-function buildUserPrompt(formData: ProposalFormData, websiteContent: string | null): string {
-  const serviceList = [
-    ...formData.services.map((s) => `- ${SERVICE_LABELS[s]}`),
-    ...(formData.customService?.trim() ? [`- ${formData.customService.trim()} (custom)`] : []),
+// ─── Build user prompt ────────────────────────────────────────────────────────
+function buildUserPrompt(
+  formData: ProposalFormData,
+  websiteContent: string | null
+): string {
+  const services = [
+    ...formData.services.map((s) => `• ${ALL_SERVICE_LABELS[s] || s}`),
+    ...(formData.customService?.trim() ? [`• ${formData.customService.trim()} (custom)`] : []),
   ].join("\n");
 
+  const profileDescriptions: Record<string, string> = {
+    no_digital_presence: "No digital presence — starting from scratch",
+    basic_presence: "Basic presence — has some online presence but limited or inconsistent",
+    solid_presence: "Solid presence — established but wants to scale or improve",
+  };
+
+  const profileLine = formData.prospectProfile
+    ? `Profile: ${profileDescriptions[formData.prospectProfile] || formData.prospectProfile}`
+    : "Profile: Not specified";
+
   const websiteSection = websiteContent
-    ? `\nWebsite content (scraped — use for specific references):\n${websiteContent}`
+    ? `\nWEBSITE CONTENT (scraped — use for specific, accurate references):\n---\n${websiteContent}\n---`
     : formData.websiteUrl
-    ? "\n(Website could not be scraped)"
+    ? `\nWebsite: ${formData.websiteUrl} (could not be scraped — do not invent content from it)`
     : "";
 
   return `Generate a proposal for:
 
 Prospect: ${formData.prospectName}
-Website: ${formData.websiteUrl || "Not provided"}
-LinkedIn: ${formData.linkedinUrl || "Not provided"}
-Profile: ${formData.prospectProfile}
-Language: ${formData.language}
+${formData.websiteUrl ? `Website: ${formData.websiteUrl}` : "Website: Not provided"}
+${formData.linkedinUrl ? `LinkedIn: ${formData.linkedinUrl}` : "LinkedIn: Not provided"}
+${profileLine}
 ${websiteSection}
 
-Services selected (ONLY include these):
-${serviceList}
+SERVICES SELECTED (generate ONLY for these):
+${services || "⚠ No services selected — generate a brief placeholder proposal"}
 
-Notes / pain points:
-${formData.notes || "None"}
+Notes / pain points from Leo:
+${formData.notes?.trim() || "None provided"}
 
-Suggested monthly investment: ${formData.suggestedPrice ? `$${formData.suggestedPrice} USD/mo` : "Not specified — pick a reasonable price based on scope"}
-
-Match the concise, professional style of real Zinnia proposals. Name the prospect directly. If website content was provided, reference 1-2 specific things about their current presence.`;
+Suggested monthly investment: ${
+    formData.suggestedPrice
+      ? `$${formData.suggestedPrice} USD/mo`
+      : "Not specified — choose a price that fits the scope"
+  }`;
 }
 
+// ─── API route ────────────────────────────────────────────────────────────────
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
@@ -160,14 +278,11 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const template = getTemplate(formData.prospectProfile, formData.language);
-    const systemPrompt = buildSystemPrompt(template);
-
-    // Scrape prospect's website for real context (LinkedIn is skipped — blocked)
     const websiteContent = formData.websiteUrl
       ? await scrapeWebsite(formData.websiteUrl)
       : null;
 
+    const systemPrompt = buildSystemPrompt(formData, websiteContent);
     const userPrompt = buildUserPrompt(formData, websiteContent);
 
     const message = await client.messages.create({
@@ -187,16 +302,19 @@ export async function POST(req: NextRequest) {
       return match ? match[1].trim() : "";
     }
 
+    // Try both English and Spanish tag variants
     const content = {
-      phase1: extractTag("PHASE1"),
-      phase2: extractTag("PHASE2"),
+      phase1: extractTag("PHASE1") || extractTag("FASE1"),
+      phase2: extractTag("PHASE2") || extractTag("FASE2"),
       additional: extractTag("ADDITIONAL"),
       feeStructure: extractTag("FEE_STRUCTURE"),
       closingNote: extractTag("CLOSING_NOTE"),
     };
 
+    const { needsBrand, needsLinkedIn } = deriveSections(formData);
+
     return NextResponse.json({
-      template,
+      template: needsBrand && needsLinkedIn ? "B" : needsLinkedIn ? "B" : "A",
       content,
       formData,
       generatedAt: new Date().toISOString(),
