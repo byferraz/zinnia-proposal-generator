@@ -85,6 +85,11 @@ YOUR WRITING STYLE (from 37 real proposals)
 - Bullets describe concrete deliverables, not vague concepts
 - Fee structure is scannable: plan name + price + minimum term + one-offs listed separately
 
+CRITICAL OUTPUT FORMAT RULE:
+Every list item — in every section, without exception — MUST start with "- " (dash + space).
+Non-list lines (section titles, context sentences, delivery lines, fee lines) must NOT start with "- ".
+Never use "•", "*", "–", or numbered lists. Only "- " for bullets.
+
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 STRUCTURE & FORMAT RULES (always fixed)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
