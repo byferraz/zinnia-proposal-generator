@@ -1,6 +1,7 @@
 export type Language = "english" | "spanish";
 
 export type ProspectProfile =
+  | ""
   | "no_digital_presence"
   | "basic_presence"
   | "solid_presence";
