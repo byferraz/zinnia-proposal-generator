@@ -22,6 +22,7 @@ export interface ProposalFormData {
   language: Language;
   prospectProfile: ProspectProfile;
   services: Service[];
+  customService: string;
   notes: string;
   suggestedPrice: number | "";
 }
@@ -29,18 +30,11 @@ export interface ProposalFormData {
 export interface GeneratedProposal {
   formData: ProposalFormData;
   content: {
-    gaps?: string;
-    phase1?: string;
-    phase2?: string;
-    challenges?: string;
-    brandStrategy?: string;
-    marketingPlan?: string;
-    linkedinPlan?: string;
+    phase1: string;
+    phase2: string;
+    additional: string;
     feeStructure: string;
-    aboutZinnia: string;
-    attract?: string;
-    nurture?: string;
-    convert?: string;
+    closingNote: string;
   };
   template: "A" | "B" | "C";
   generatedAt: string;
