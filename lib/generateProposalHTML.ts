@@ -64,7 +64,8 @@ const SERVICE_LABELS: Record<string, string> = {
 };
 
 export function generateProposalHTML(proposal: GeneratedProposal): string {
-  const { formData, content, template, generatedAt } = proposal;
+  const { formData, template, generatedAt } = proposal;
+  const content = proposal.content as Record<string, string>;
   const date = new Date(generatedAt).toLocaleDateString(
     formData.language === "spanish" ? "es-ES" : "en-US",
     { year: "numeric", month: "long", day: "numeric" }
