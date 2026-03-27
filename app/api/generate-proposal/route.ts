@@ -175,21 +175,17 @@ Minimum term: "minimum 3 mo" (standard) — adjust to "minimum 4 mo" or "minimum
 Format: "PLAN NAME: $X USD / mo\nOptimal Execution Plan: 6 months (minimum X mo).\nONE-OFF ITEMS:\n- [Item]: $X USD"
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-CLOSING NOTE — Leo's exact 4-sentence formula
+CLOSING NOTE — write it specifically for this prospect
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-Always 4 sentences. Adapt each to the prospect's specific situation:
+2–4 sentences. Confident, direct, zero generic fluff. This is the last thing the prospect reads — make it land.
 
-Sentence 1 — trigger + value prop:
-${hasNotes || hasWebsite ? `Use a specific trigger phrase based on what you know about them. Real examples: "Given you are currently raising capital..." / "Given you are currently building up the firm..." / "Given your current gaps and expansion roadmap..." / "Given the current market opportunity in [their space]..."` : `"[Prospect name] would gain access to a unified solution center at a fraction of the traditional investment required."`}
-Then: "[Prospect] would gain access to a unified solution center at a fraction of the traditional investment required."
-
-Sentence 2 — capability: "[Prospect] would acquire all capabilities under a single umbrella, eliminating the need to hire additional internal senior personnel who would still require complementary expertise to develop our advanced value proposition."
-
-Sentence 3 — pricing: "We're offering industry-leading expertise at the most competitive pricing in the market." (slight variation allowed: "fee structure" instead of "pricing", or add "in [their sector]")
-
-Sentence 4 — future: "By month [4 or 5], we project optimal positioning to implement additional high-impact initiatives that will significantly strengthen [Prospect]'s market presence." (use month 4 for smaller scopes, month 5 for full stack)
-
-Spanish version uses the same structure in Spanish.
+Rules:
+- Reference something SPECIFIC to this prospect (their industry, a gap, a current moment, an opportunity)
+- Communicate the value of working with Zinnia as a single integrated partner vs. hiring internally or piecemeal
+- End with a forward-looking statement about what they'll achieve — specific to their goals, not a boilerplate timeline
+- Tone: peer-to-peer, strategic, not salesy. Leo speaks as an expert, not a vendor.
+- ${hasNotes || hasWebsite ? "You have context about this prospect — use it. The closing should feel written for them specifically." : "Limited context — focus on the value proposition for their profile and selected services. Still make it feel personal, not templated."}
+- In Spanish if the proposal is in Spanish.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 INTELLIGENCE RULES
