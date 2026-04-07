@@ -295,7 +295,14 @@ body { font-family:'Space Grotesk',sans-serif; background:#fff; color:#1B2035; f
             className="flex items-center gap-2 text-white/60 hover:text-white transition-colors text-sm"
           >
             <ArrowLeft size={14} />
-            Edit & Regenerate
+            New Proposal
+          </button>
+          <button
+            onClick={() => router.push("/history")}
+            className="flex items-center gap-2 text-white/50 hover:text-white transition-colors text-sm"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l4 2"/></svg>
+            History
           </button>
           <div className="w-px h-4 bg-white/20" />
           <Image src="/zinnia-logo-white.svg" alt="Zinnia" width={90} height={18} />

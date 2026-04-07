@@ -131,9 +131,15 @@ export default function HomePage() {
 
   return (
     <div className="min-h-screen bg-[#E8EAF0]">
-      <header className="bg-[#1B2035] px-8 py-4 flex items-center gap-4">
-        <Image src="/zinnia-logo-white.svg" alt="Zinnia" width={120} height={24} priority />
-        <span className="text-white/30 text-sm">— Proposal Generator</span>
+      <header className="bg-[#1B2035] px-8 py-4 flex items-center justify-between">
+        <div className="flex items-center gap-4">
+          <Image src="/zinnia-logo-white.svg" alt="Zinnia" width={120} height={24} priority />
+          <span className="text-white/30 text-sm">— Proposal Generator</span>
+        </div>
+        <a href="/history" className="flex items-center gap-1.5 text-white/50 hover:text-white text-xs transition-colors">
+          <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l4 2"/></svg>
+          History
+        </a>
       </header>
 
       <main className="max-w-2xl mx-auto px-4 py-10">

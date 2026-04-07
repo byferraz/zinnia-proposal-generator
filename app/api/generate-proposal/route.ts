@@ -1,5 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { NextRequest, NextResponse } from "next/server";
+import { createClient } from "@supabase/supabase-js";
 import type { ProposalFormData } from "@/types/proposal";
 import { scrapeWebsite } from "@/lib/scrapeWebsite";
 
@@ -291,13 +292,34 @@ export async function POST(req: NextRequest) {
     };
 
     const { needsBrand, needsLinkedIn } = deriveSections(formData);
+    const template = needsBrand && needsLinkedIn ? "B" : "A";
+    const generatedAt = new Date().toISOString();
 
-    return NextResponse.json({
-      template: needsBrand && needsLinkedIn ? "B" : "A",
-      content,
-      formData,
-      generatedAt: new Date().toISOString(),
-    });
+    // Auto-save to Supabase (non-blocking — don't fail the request if save fails)
+    try {
+      const sb = createClient(
+        process.env.NEXT_PUBLIC_SUPABASE_URL!,
+        process.env.SUPABASE_SERVICE_ROLE_KEY!
+      );
+      const slug = formData.prospectName.toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, "");
+      await sb.from("saved_proposals").insert({
+        prospect_name: formData.prospectName,
+        prospect_slug: slug,
+        language: formData.language ?? "english",
+        services: [
+          ...(formData.services ?? []),
+          ...(formData.customService?.trim() ? [formData.customService.trim()] : []),
+        ],
+        template,
+        content,
+        form_data: formData,
+        generated_at: generatedAt,
+      });
+    } catch (saveErr) {
+      console.warn("Auto-save failed (non-blocking):", saveErr);
+    }
+
+    return NextResponse.json({ template, content, formData, generatedAt });
   } catch (error) {
     console.error("Proposal generation error:", error);
     return NextResponse.json({ error: "Failed to generate proposal" }, { status: 500 });
