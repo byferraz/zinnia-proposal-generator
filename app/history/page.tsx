@@ -78,7 +78,7 @@ export default function HistoryPage() {
   );
 
   const formatDate = (iso: string) =>
-    new Date(iso).toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric" });
+    new Date(iso).toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" });
 
   return (
     <div className="min-h-screen bg-[#E8EAF0]">
