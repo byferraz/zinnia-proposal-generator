@@ -95,7 +95,7 @@ function ClientSection({
   onDelete: (id: string, slug: string) => void;
   deleting: string | null;
 }) {
-  const [open, setOpen] = useState(true);
+  const [open, setOpen] = useState(false);
 
   return (
     <div className="bg-white rounded-xl shadow-sm border border-[#1B2035]/5 overflow-hidden">

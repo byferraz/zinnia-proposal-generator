@@ -49,7 +49,8 @@ export default function ProposalPage() {
   const router = useRouter();
   const [proposal, setProposal] = useState<GeneratedProposal | null>(null);
   const [saved, setSaved] = useState(false);
-  const [dropdownOpen, setDropdownOpen] = useState(false);
+  const [dropdownTop, setDropdownTop] = useState(false);
+  const [dropdownBottom, setDropdownBottom] = useState(false);
   const [downloading, setDownloading] = useState<"pdf" | "word" | null>(null);
 
   const phase1Ref = useRef<HTMLDivElement>(null);
@@ -217,12 +218,12 @@ body { font-family:'Space Grotesk',sans-serif; background:#fff; color:#1B2035; f
     a.download = `zinnia-proposal-${slug()}.html`;
     a.click();
     URL.revokeObjectURL(url);
-    setDropdownOpen(false);
+    setDropdownTop(false); setDropdownBottom(false);
   }
 
   function handleDownloadPDF() {
     if (!proposal) return;
-    setDropdownOpen(false);
+    setDropdownTop(false); setDropdownBottom(false);
     const html = buildPrintHTML();
     const win = window.open("", "_blank");
     if (!win) return;
@@ -244,7 +245,7 @@ body { font-family:'Space Grotesk',sans-serif; background:#fff; color:#1B2035; f
   async function handleDownloadWord() {
     if (!proposal) return;
     setDownloading("word");
-    setDropdownOpen(false);
+    setDropdownTop(false); setDropdownBottom(false);
     try {
       const payload = { ...proposal, editedHTML: getEditedHTML() };
       const res = await fetch("/api/export-docx", {
@@ -328,14 +329,14 @@ body { font-family:'Space Grotesk',sans-serif; background:#fff; color:#1B2035; f
           {/* Single Download dropdown */}
           <div className="relative">
             <button
-              onClick={() => setDropdownOpen((o) => !o)}
+              onClick={() => setDropdownTop((o) => !o)}
               className="flex items-center gap-2 px-4 py-2 bg-[#DFF266] text-[#1B2035] font-semibold rounded text-sm hover:opacity-90 transition-opacity"
             >
               {downloading ? <Loader2 size={13} className="animate-spin" /> : <Download size={13} />}
               Download
-              <ChevronDown size={13} className={`transition-transform ${dropdownOpen ? "rotate-180" : ""}`} />
+              <ChevronDown size={13} className={`transition-transform ${dropdownTop ? "rotate-180" : ""}`} />
             </button>
-            {dropdownOpen && (
+            {dropdownTop && (
               <div className="absolute right-0 top-full mt-1 w-40 bg-white rounded-lg shadow-xl border border-[#E8EAF0] overflow-hidden z-50">
                 <button onClick={handleDownloadHTML} className="w-full text-left px-4 py-2.5 text-sm text-[#1B2035] hover:bg-[#E8EAF0] transition-colors">
                   HTML
@@ -454,14 +455,14 @@ body { font-family:'Space Grotesk',sans-serif; background:#fff; color:#1B2035; f
         <div className="mt-6 flex justify-center">
           <div className="relative">
             <button
-              onClick={() => setDropdownOpen((o) => !o)}
+              onClick={() => setDropdownBottom((o) => !o)}
               className="flex items-center gap-2 px-7 py-3 bg-[#1B2035] text-[#DFF266] font-semibold rounded-lg text-sm hover:bg-[#2A3150] transition-colors"
             >
               {downloading ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} />}
               Download
-              <ChevronDown size={14} className={`transition-transform ${dropdownOpen ? "rotate-180" : ""}`} />
+              <ChevronDown size={14} className={`transition-transform ${dropdownBottom ? "rotate-180" : ""}`} />
             </button>
-            {dropdownOpen && (
+            {dropdownBottom && (
               <div className="absolute bottom-full mb-1 left-1/2 -translate-x-1/2 w-44 bg-white rounded-lg shadow-xl border border-[#E8EAF0] overflow-hidden z-50">
                 <button onClick={handleDownloadHTML} className="w-full text-left px-4 py-2.5 text-sm text-[#1B2035] hover:bg-[#E8EAF0] transition-colors">
                   HTML
