@@ -114,12 +114,15 @@ export default function HomePage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(form),
       });
-      if (!res.ok) throw new Error("API error");
       const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.detail || data.error || "API error");
+      }
       sessionStorage.setItem("zinnia_proposal", JSON.stringify(data));
       router.push("/proposal");
-    } catch {
-      setError("Failed to generate proposal. Check your API key and try again.");
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Unknown error";
+      setError(`Failed to generate proposal: ${msg}`);
     } finally {
       setLoading(false);
     }

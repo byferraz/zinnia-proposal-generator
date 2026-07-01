@@ -12,7 +12,7 @@ export async function POST(req: NextRequest) {
     const websiteContent = websiteUrl ? await scrapeWebsite(websiteUrl) : null;
 
     const message = await client.messages.create({
-      model: "claude-sonnet-4-20250514",
+      model: "claude-sonnet-4-5",
       max_tokens: 800,
       system: `You are Leo Hsu, CEO of Zinnia Group, a digital marketing agency specialized in asset & wealth management. Based on a prospect's name and URLs, suggest the right intake form values for a proposal.
 
@@ -58,6 +58,15 @@ Suggest form values for this prospect.`,
     return NextResponse.json(suggestions);
   } catch (error) {
     console.error("Suggest form error:", error);
-    return NextResponse.json({ error: "Failed to suggest" }, { status: 500 });
+    const detail =
+      error instanceof Anthropic.APIError
+        ? `Anthropic API (${error.status}): ${error.message}`
+        : error instanceof Error
+        ? error.message
+        : "Unknown error";
+    return NextResponse.json(
+      { error: "Failed to suggest", detail },
+      { status: 500 }
+    );
   }
 }

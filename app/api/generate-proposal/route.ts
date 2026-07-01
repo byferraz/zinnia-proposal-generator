@@ -267,7 +267,7 @@ export async function POST(req: NextRequest) {
     );
 
     const message = await client.messages.create({
-      model: "claude-sonnet-4-20250514",
+      model: "claude-sonnet-4-5",
       max_tokens: 2000,
       system: systemPrompt,
       messages: [{ role: "user", content: userPrompt }],
@@ -322,6 +322,15 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ template, content, formData, generatedAt });
   } catch (error) {
     console.error("Proposal generation error:", error);
-    return NextResponse.json({ error: "Failed to generate proposal" }, { status: 500 });
+    const detail =
+      error instanceof Anthropic.APIError
+        ? `Anthropic API (${error.status}): ${error.message}`
+        : error instanceof Error
+        ? error.message
+        : "Unknown error";
+    return NextResponse.json(
+      { error: "Failed to generate proposal", detail },
+      { status: 500 }
+    );
   }
 }
