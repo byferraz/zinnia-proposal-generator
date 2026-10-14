@@ -165,12 +165,16 @@ body { font-family:'Space Grotesk',sans-serif; background:#fff; color:#1B2035; f
 .footer-l { color:rgba(255,255,255,.3); font-size:10px; letter-spacing:.06em; text-transform:uppercase; }
 .footer-r { color:rgba(255,255,255,.5); font-size:11px; }
 .footer-r a { color:#DFF266; text-decoration:none; }
-/* One-page continuous PDF — no forced page breaks */
-@page { size: auto; margin: 0mm; }
+/* A4 print: first page full-bleed header, following pages get top breathing room */
+@page { size: A4; margin: 14mm 0 14mm 0; }
+@page :first { margin-top: 0; }
 @media print {
   html, body { height:auto; }
   .doc { max-width:100%; }
-  * { page-break-inside: avoid; }
+  .section-title { break-after: avoid; page-break-after: avoid; }
+  .section-body p, .section-body li { break-inside: avoid; page-break-inside: avoid; orphans:3; widows:3; }
+  .header, .tags, .fee-section, .closing, .footer { break-inside: avoid; page-break-inside: avoid; }
+  .closing + .footer { break-before: avoid; page-break-before: avoid; }
 }
 </style>
 </head>
@@ -230,16 +234,8 @@ body { font-family:'Space Grotesk',sans-serif; background:#fff; color:#1B2035; f
     win.document.write(html);
     win.document.close();
     win.focus();
-    // Measure real doc height after fonts load, set a single tall @page so
-    // Chrome's "Save as PDF" produces one continuous page with no cuts
-    setTimeout(() => {
-      const docEl = win.document.documentElement;
-      const docHeight = Math.max(docEl.scrollHeight, docEl.offsetHeight);
-      const pageStyle = win.document.createElement("style");
-      pageStyle.innerHTML = `@page { size: 794px ${docHeight}px; margin: 0; }`;
-      win.document.head.appendChild(pageStyle);
-      win.print();
-    }, 900);
+    // Wait for fonts, then print — pagination comes from the A4 @page rules
+    setTimeout(() => win.print(), 900);
   }
 
   async function handleDownloadWord() {

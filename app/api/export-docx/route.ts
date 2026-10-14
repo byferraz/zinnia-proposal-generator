@@ -285,6 +285,7 @@ export async function POST(req: NextRequest) {
           },
           properties: {
             page: {
+              size: { width: 11906, height: 16838 }, // A4 in twips
               margin: {
                 top: L(0.55),
                 bottom: L(0.65),
