@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import path from "path";
 import fs from "fs";
 import sharp from "sharp";
+import JSZip from "jszip";
 import {
   Document,
   Packer,
@@ -16,450 +17,384 @@ import {
   TableCell,
   WidthType,
   ShadingType,
-  HeightRule,
   TabStopType,
-  TabStopPosition,
-  convertInchesToTwip,
+  TableLayoutType,
+  VerticalAlign,
+  LevelFormat,
+  PageNumber,
+  CharacterSet,
 } from "docx";
+import type { Block, ProposalModel, Run } from "@/lib/printProposal";
+
+// Word version of the A4 "investment memo" proposal. Renders the same
+// ProposalModel the browser builds for the HTML/PDF export.
 
 const NAVY = "1B2035";
-const GREEN = "DFF266";
-const GRAY = "E8EAF0";
-const L = convertInchesToTwip;
+const LIME = "DFF266";
+const BLUE = "D1E2F4";
+const RULE = "E3E6EE";
+const MUTED = "565C72";
+const PANEL = "F3F5F9";
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
+const HEAD = "Space Grotesk SemiBold";
+const BODY = "Geist";
+const BODY_B = "Geist SemiBold";
 
-function noBorder() {
-  return {
-    top: { style: BorderStyle.NONE },
-    bottom: { style: BorderStyle.NONE },
-    left: { style: BorderStyle.NONE },
-    right: { style: BorderStyle.NONE },
-  };
-}
+const mm = (v: number) => Math.round((v / 25.4) * 1440);
+const PAGE_W = 11906; // A4
+const PAGE_H = 16838;
+const MARGIN = { top: mm(16), bottom: mm(20), left: mm(18), right: mm(18) };
+const CONTENT_W = PAGE_W - MARGIN.left - MARGIN.right;
+const GUTTER_W = Math.round(CONTENT_W * 0.195);
+const COL_W = CONTENT_W - GUTTER_W;
 
-// Strip HTML to plain text, converting list items to bullet lines
-function stripHTML(html: string): string {
-  return html
-    .replace(/<br\s*\/?>/gi, "\n")
-    .replace(/<\/p>/gi, "\n")
-    .replace(/<li[^>]*>/gi, "• ")
-    .replace(/<\/li>/gi, "\n")
-    .replace(/<[^>]+>/g, "")
-    .replace(/&amp;/g, "&")
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&nbsp;/g, " ")
-    .replace(/\n{3,}/g, "\n\n")
-    .trim();
-}
+const NONE = { style: BorderStyle.NONE, size: 0, color: "FFFFFF" };
+const noBorders = { top: NONE, bottom: NONE, left: NONE, right: NONE };
+const tableNoBorders = { ...noBorders, insideHorizontal: NONE, insideVertical: NONE };
+const hair = (color = RULE, size = 4) => ({ style: BorderStyle.SINGLE, size, color });
+const zeroMargins = { top: 0, bottom: 0, left: 0, right: 0 };
 
-// Parse HTML → Paragraph[] with left/right indent baked in
-function parseToParagraphs(
-  html: string,
-  opts: { leftIn?: number } = {}
-): Paragraph[] {
-  if (!html) return [];
-  const plain = stripHTML(html);
-  const lines = plain.split("\n").filter((l) => l.trim());
-  const leftTwip = opts.leftIn !== undefined ? opts.leftIn : L(0.6);
-  const rightTwip = L(0.6);
-
-  return lines.map((line) => {
-    const t = line.trim();
-    const isBullet = t.startsWith("• ") || t.startsWith("- ");
-    const text = isBullet ? t.replace(/^[•\-]\s+/, "") : t;
-    const isBoldLabel =
-      !isBullet &&
-      /^(PHASE \d|FASE \d|TAILORED|STRATEGIC|FULL STACK|ONE-OFF|ZINNIA MEDIA|EXECUTIVE POSITIONING|ONE PAGER)/i.test(t);
-
-    return new Paragraph({
-      children: [
-        ...(isBullet
-          ? [new TextRun({ text: "•  ", color: "BBBBBB", size: 20, font: "Aptos" })]
-          : []),
-        new TextRun({
-          text,
-          bold: isBoldLabel,
-          size: 20,
-          color: isBoldLabel ? NAVY : "333333",
-          font: "Aptos",
-        }),
-      ],
-      indent: {
-        left: isBullet ? leftTwip + L(0.15) : leftTwip,
-        right: rightTwip,
-      },
-      spacing: { after: isBoldLabel ? 120 : 90, before: isBoldLabel ? 140 : 0 },
-    });
+function text(t: string, o: { font?: string; size?: number; color?: string; caps?: boolean; spacing?: number; shade?: string } = {}) {
+  return new TextRun({
+    text: t,
+    font: o.font ?? BODY,
+    size: o.size ?? 20,
+    color: o.color ?? NAVY,
+    allCaps: o.caps,
+    characterSpacing: o.spacing,
+    shading: o.shade ? { type: ShadingType.CLEAR, color: "auto", fill: o.shade } : undefined,
   });
 }
 
-// Section label (gray caps + bottom divider)
-function sectionHeader(label: string): Paragraph {
-  return new Paragraph({
-    children: [
-      new TextRun({
-        text: label.toUpperCase(),
-        bold: true,
-        size: 17,
-        color: "AAAAAA",
-        characterSpacing: 40,
-        font: "Aptos",
-      }),
-    ],
-    spacing: { before: 420, after: 160 },
-    indent: { left: L(0.6), right: L(0.6) },
-    border: { bottom: { style: BorderStyle.SINGLE, size: 4, color: GRAY, space: 4 } },
+const runs = (rs: Run[], size = 20) => rs.map((r) => text(r.text, { font: r.bold ? BODY_B : BODY, size }));
+
+function blockParagraphs(blocks: Block[]): Paragraph[] {
+  return blocks.map((b, i) => {
+    const next = blocks[i + 1];
+    switch (b.type) {
+      case "li":
+        return new Paragraph({
+          numbering: { reference: "memo-bullet", level: 0 },
+          spacing: { before: 0, after: next?.type === "li" ? 50 : 140, line: 288 },
+          keepLines: true,
+          children: runs(b.runs),
+        });
+      case "sub":
+        return new Paragraph({
+          spacing: { before: 200, after: 70 },
+          keepNext: true,
+          children: [text(b.runs.map((r) => r.text).join(""), { font: HEAD, size: 21 })],
+        });
+      case "dur":
+        return new Paragraph({
+          spacing: { before: 60, after: 180 },
+          keepLines: true,
+          children: [text(` ${b.runs.map((r) => r.text).join("")} `, { size: 17, shade: BLUE })],
+        });
+      case "price":
+        return new Paragraph({
+          spacing: { before: 0, after: 90 },
+          keepLines: true,
+          children: b.runs.map((r) => text(r.text, { font: HEAD, size: 22 })),
+        });
+      default:
+        return new Paragraph({
+          spacing: { before: 0, after: 110, line: 288 },
+          keepLines: true,
+          children: runs(b.runs),
+        });
+    }
   });
 }
 
-// Plain body section
-function bodySection(label: string, html: string): Paragraph[] {
-  const items = parseToParagraphs(html);
-  if (!items.length) return [];
-  return [sectionHeader(label), ...items];
-}
-
-// Fee section — each paragraph carries the green-left border + gray bg directly.
-// First paragraph gets spaceBefore, last gets spaceAfter → no empty border-lines.
-function feeSection(label: string, html: string): Paragraph[] {
-  if (!html) return [];
-  const plain = stripHTML(html);
-  const lines = plain.split("\n").filter((l) => l.trim());
-  if (!lines.length) return [];
-
-  const feeParagraphs = lines.map((line, i) => {
-    const t = line.trim();
-    const isBullet = t.startsWith("• ") || t.startsWith("- ");
-    const text = isBullet ? t.replace(/^[•\-]\s+/, "") : t;
-    const isFirst = i === 0;
-    const isLast = i === lines.length - 1;
-    const isBoldLabel =
-      !isBullet &&
-      /^(FULL STACK|ONE-OFF|ZINNIA MEDIA|EXECUTIVE|ONE PAGER)/i.test(t);
-
-    return new Paragraph({
-      children: [
-        ...(isBullet
-          ? [new TextRun({ text: "•  ", color: "BBBBBB", size: 20, font: "Aptos" })]
-          : []),
-        new TextRun({
-          text,
-          bold: isBoldLabel,
-          size: 20,
-          color: isBoldLabel ? NAVY : "333333",
-          font: "Aptos",
-        }),
-      ],
-      shading: { fill: "F4F5F9", type: ShadingType.CLEAR },
-      border: {
-        left: { style: BorderStyle.SINGLE, size: 18, color: GREEN, space: 8 },
-      },
-      indent: {
-        left: isBullet ? L(0.75) : L(0.6),
-        right: L(0.6),
-      },
-      spacing: {
-        before: isFirst ? 120 : isBoldLabel ? 100 : 0,
-        after: isLast ? 120 : isBoldLabel ? 100 : 80,
-      },
-    });
+function sectionTable(s: ProposalModel["sections"][number]): Table {
+  const heading = new Paragraph({
+    spacing: { before: 0, after: 150 },
+    keepNext: true,
+    children: [text(s.title, { font: HEAD, size: 26 })],
   });
+  const bodyParas = blockParagraphs(s.blocks);
+  const content =
+    s.kind === "fee"
+      ? [
+          heading,
+          new Table({
+            width: { size: COL_W, type: WidthType.DXA },
+            columnWidths: [COL_W],
+            layout: TableLayoutType.FIXED,
+            borders: tableNoBorders,
+            rows: [
+              new TableRow({
+                cantSplit: true,
+                children: [
+                  new TableCell({
+                    width: { size: COL_W, type: WidthType.DXA },
+                    shading: { type: ShadingType.CLEAR, color: "auto", fill: PANEL },
+                    margins: { top: mm(4), bottom: mm(2.5), left: mm(5), right: mm(5) },
+                    borders: noBorders,
+                    children: bodyParas,
+                  }),
+                ],
+              }),
+            ],
+          }),
+          new Paragraph({ children: [] }),
+        ]
+      : [heading, ...bodyParas];
 
-  return [sectionHeader(label), ...feeParagraphs];
-}
-
-// Gradient rows for header (near-white → navy), so the top page margin blends in
-function gradientRows(): TableRow[] {
-  const steps = [
-    { fill: "ECEDF1", height: L(0.07) }, // near-white → almost invisible against white margin
-    { fill: "ABAFCA", height: L(0.05) },
-    { fill: "5B638A", height: L(0.05) },
-    { fill: "323B60", height: L(0.04) },
-  ];
-  return steps.map(
-    ({ fill, height }) =>
+  return new Table({
+    width: { size: CONTENT_W, type: WidthType.DXA },
+    columnWidths: [GUTTER_W, COL_W],
+    layout: TableLayoutType.FIXED,
+    borders: tableNoBorders,
+    rows: [
       new TableRow({
-        height: { value: height, rule: HeightRule.EXACT },
-        cantSplit: true,
         children: [
           new TableCell({
-            shading: { fill, type: ShadingType.CLEAR },
-            borders: noBorder(),
-            children: [new Paragraph({ children: [] })],
+            width: { size: GUTTER_W, type: WidthType.DXA },
+            borders: noBorders,
+            margins: zeroMargins,
+            children: [
+              new Paragraph({ spacing: { after: 60 }, children: [text(s.num, { font: HEAD, size: 56 })] }),
+              new Paragraph({ children: [text(s.gutter, { size: 14, color: MUTED, caps: true, spacing: 24 })] }),
+            ],
           }),
+          new TableCell({ width: { size: COL_W, type: WidthType.DXA }, borders: noBorders, margins: zeroMargins, children: content }),
         ],
-      })
-  );
+      }),
+    ],
+  });
 }
 
-// ─── API route ────────────────────────────────────────────────────────────────
+function metaRow(label: string, value: Paragraph[], invest = false): TableRow {
+  const fill = invest ? { type: ShadingType.CLEAR, color: "auto", fill: NAVY } : undefined;
+  const borders = invest
+    ? { top: hair(NAVY), bottom: hair(NAVY), left: NONE, right: NONE }
+    : { top: hair(), bottom: hair(), left: NONE, right: NONE };
+  const pad = invest ? mm(2.6) : mm(1.8);
+  return new TableRow({
+    cantSplit: true,
+    children: [
+      new TableCell({
+        width: { size: GUTTER_W, type: WidthType.DXA },
+        borders,
+        shading: fill,
+        margins: { top: pad, bottom: pad, left: invest ? mm(3) : 0, right: 0 },
+        children: [new Paragraph({ children: [text(label, { size: 19, color: invest ? "B6BCCE" : MUTED })] })],
+      }),
+      new TableCell({
+        width: { size: COL_W, type: WidthType.DXA },
+        borders,
+        shading: fill,
+        margins: { top: pad, bottom: pad, left: 0, right: invest ? mm(3) : 0 },
+        verticalAlign: VerticalAlign.TOP,
+        children: value,
+      }),
+    ],
+  });
+}
+
+function loadFont(file: string): Buffer | null {
+  try {
+    return fs.readFileSync(path.join(process.cwd(), "assets", "fonts", file));
+  } catch {
+    return null;
+  }
+}
+
 export async function POST(req: NextRequest) {
   try {
-    const body = await req.json();
-    const { formData, editedHTML, content, generatedAt } = body;
+    const { model: m } = (await req.json()) as { model: ProposalModel };
+    if (!m?.sections) return NextResponse.json({ error: "Missing proposal model" }, { status: 400 });
+    const L = m.labels;
 
-    const isSpanish = formData.language === "spanish";
-    const date = new Date(generatedAt).toLocaleDateString(
-      isSpanish ? "es-ES" : "en-US",
-      { year: "numeric", month: "long", day: "numeric" }
-    );
-
-    const SERVICE_LABELS: Record<string, string> = {
-      linkedin_management: "LinkedIn Management (Essential)",
-      full_stack: "Full Stack (Brand + LinkedIn)",
-      marketing_strategy: "Tailored Marketing Strategy & Plan",
-      website_development: "Website Development",
-      executive_positioning: "Executive Positioning (individual)",
-      one_pager: "One Pager / Teaser",
-      brand_manual: "Brand Manual",
-      media_amplification: "Zinnia Media Amplification",
-    };
-
-    const allServices = [
-      ...formData.services.map((s: string) => SERVICE_LABELS[s] || s),
-      ...(formData.customService?.trim() ? [formData.customService.trim()] : []),
-    ].join("  |  ");
-
-    const src = editedHTML || {};
-    const phase1HTML = src.phase1 || content?.phase1 || "";
-    const phase2HTML = src.phase2 || content?.phase2 || "";
-    const additionalHTML = src.additional || content?.additional || "";
-    const feeHTML = src.feeStructure || content?.feeStructure || "";
-    const closingHTML = src.closingNote || content?.closingNote || "";
-
-    const phase1Label = isSpanish
-      ? "Fase 1: Alineación Estratégica de Marca"
-      : "Phase 1: Essential Brand Strategy Alignment";
-    const phase2Label = isSpanish
-      ? "Fase 2: Posicionamiento en LinkedIn"
-      : "Phase 2: Positioning – LinkedIn Essentials";
-    const addLabel = isSpanish ? "Servicios Adicionales" : "Additional Essentials";
-    const feeLabel = isSpanish ? "Estructura de Honorarios" : "Fee Structure & Breakdown";
-
-    // ── Logo: read SVG, recolor to white, convert to PNG ──────────────────────
     let logoPng: Buffer | null = null;
     try {
-      const svgPath = path.join(process.cwd(), "public", "logozinnia.svg");
-      const svgRaw = fs.readFileSync(svgPath, "utf-8");
-      // Recolor navy paths to white for use on dark background
-      const svgWhite = svgRaw.replace(/fill="#1B2035"/g, 'fill="#FFFFFF"');
-      logoPng = await sharp(Buffer.from(svgWhite))
-        .resize({ width: 320, height: 64, fit: "contain", background: { r: 27, g: 32, b: 53, alpha: 0 } })
-        .png()
-        .toBuffer();
+      const svg = fs.readFileSync(path.join(process.cwd(), "public", "logozinnia.svg"));
+      logoPng = await sharp(svg, { density: 400 }).resize({ width: 448 }).png().toBuffer();
     } catch {
-      // Logo not critical — proceed without it
+      // Logo is not critical
     }
 
+    const fonts = [
+      { name: HEAD, data: loadFont("SpaceGrotesk-SemiBold.ttf") },
+      { name: BODY, data: loadFont("Geist-Regular.ttf") },
+      { name: BODY_B, data: loadFont("Geist-SemiBold.ttf") },
+    ]
+      .filter((f): f is { name: string; data: Buffer } => !!f.data)
+      .map((f) => ({ ...f, characterSet: CharacterSet.ANSI }));
+
+    // Header: logo | confidential
+    const header = new Table({
+      width: { size: CONTENT_W, type: WidthType.DXA },
+      columnWidths: [CONTENT_W / 2, CONTENT_W / 2],
+      layout: TableLayoutType.FIXED,
+      borders: tableNoBorders,
+      rows: [
+        new TableRow({
+          children: [
+            new TableCell({
+              borders: noBorders,
+              margins: zeroMargins,
+              verticalAlign: VerticalAlign.CENTER,
+              children: [
+                new Paragraph({
+                  children: logoPng
+                    ? [new ImageRun({ type: "png", data: logoPng, transformation: { width: 112, height: 22 } })]
+                    : [text("ZINNIA", { font: HEAD, size: 28 })],
+                }),
+              ],
+            }),
+            new TableCell({
+              borders: noBorders,
+              margins: zeroMargins,
+              verticalAlign: VerticalAlign.CENTER,
+              children: [new Paragraph({ alignment: AlignmentType.RIGHT, children: [text(L.conf, { size: 14, color: MUTED, caps: true, spacing: 28 })] })],
+            }),
+          ],
+        }),
+      ],
+    });
+
+    const title = [
+      new Paragraph({ spacing: { before: 360, after: 0, line: 270 }, children: [text(L.titleA, { font: HEAD, size: 46 })] }),
+      new Paragraph({
+        spacing: { before: 0, after: 300, line: 270 },
+        children: [text(`${L.titleB} `, { font: HEAD, size: 46 }), text(m.name, { font: HEAD, size: 46, shade: LIME })],
+      }),
+    ];
+
+    const chips: TextRun[] = [];
+    m.services.forEach((s, i) => {
+      if (i) chips.push(text("  ", { size: 18 }));
+      chips.push(text(` ${s} `, { size: 17, shade: "EDEFF4" }));
+    });
+
+    const meta = new Table({
+      width: { size: CONTENT_W, type: WidthType.DXA },
+      columnWidths: [GUTTER_W, COL_W],
+      layout: TableLayoutType.FIXED,
+      borders: tableNoBorders,
+      rows: [
+        metaRow(L.for, [new Paragraph({ children: [text(`${m.name}${m.site ? ` | ${m.site}` : ""}`, { size: 19 })] })]),
+        metaRow(L.by, [new Paragraph({ children: [text(m.preparedBy, { size: 19 })] })]),
+        metaRow(L.date, [new Paragraph({ children: [text(m.date, { size: 19 })] })]),
+        ...(m.services.length ? [metaRow(L.services, [new Paragraph({ spacing: { line: 300 }, children: chips })])] : []),
+        ...(m.investment
+          ? [
+              metaRow(
+                L.invest,
+                [
+                  new Paragraph({ children: [text(m.investment.amount, { font: HEAD, size: 28, color: LIME })] }),
+                  ...(m.investment.detail ? [new Paragraph({ children: [text(m.investment.detail, { size: 18, color: "E4E7EF" })] })] : []),
+                ],
+                true,
+              ),
+            ]
+          : []),
+      ],
+    });
+
+    const sections = m.sections.flatMap((s) => [sectionTable(s), new Paragraph({ spacing: { after: 260 }, children: [] })]);
+
+    const closing = m.closing.length
+      ? [
+          new Table({
+            width: { size: CONTENT_W, type: WidthType.DXA },
+            columnWidths: [GUTTER_W, COL_W],
+            layout: TableLayoutType.FIXED,
+            borders: { ...tableNoBorders, top: hair(NAVY, 6) },
+            rows: [
+              new TableRow({
+                children: [
+                  new TableCell({ width: { size: GUTTER_W, type: WidthType.DXA }, borders: { ...noBorders, top: hair(NAVY, 6) }, children: [new Paragraph({ children: [] })] }),
+                  new TableCell({
+                    width: { size: COL_W, type: WidthType.DXA },
+                    borders: { ...noBorders, top: hair(NAVY, 6) },
+                    margins: { top: mm(4.5), bottom: 0, left: 0, right: 0 },
+                    children: [
+                      ...m.closing.map((r) => new Paragraph({ spacing: { after: 140, line: 300 }, keepLines: true, children: runs(r, 21) })),
+                      new Paragraph({ spacing: { before: 120 }, children: [text(m.preparedBy, { font: BODY_B, size: 19 })] }),
+                      new Paragraph({ children: [text(m.contact, { size: 19, color: MUTED })] }),
+                    ],
+                  }),
+                ],
+              }),
+            ],
+          }),
+        ]
+      : [];
+
+    const footer = new Footer({
+      children: [
+        new Paragraph({
+          border: { top: { style: BorderStyle.SINGLE, size: 4, color: RULE, space: 6 } },
+          tabStops: [{ type: TabStopType.RIGHT, position: CONTENT_W }],
+          children: [
+            text(`Zinnia Group | ${L.conf}`, { size: 15, color: MUTED, caps: true, spacing: 10 }),
+            new TextRun({ text: `\t${m.contact} | `, font: BODY, size: 15, color: MUTED }),
+            new TextRun({ children: [PageNumber.CURRENT], font: BODY, size: 15, color: MUTED }),
+            new TextRun({ text: " / ", font: BODY, size: 15, color: MUTED }),
+            new TextRun({ children: [PageNumber.TOTAL_PAGES], font: BODY, size: 15, color: MUTED }),
+          ],
+        }),
+      ],
+    });
+
     const doc = new Document({
-      styles: {
-        default: {
-          document: {
-            run: { font: "Aptos", size: 20, color: NAVY },
-            paragraph: { spacing: { line: 276 } },
+      creator: m.preparedBy,
+      title: `Zinnia - ${m.name}`,
+      fonts,
+      styles: { default: { document: { run: { font: BODY, size: 20, color: NAVY } } } },
+      numbering: {
+        config: [
+          {
+            reference: "memo-bullet",
+            levels: [
+              {
+                level: 0,
+                format: LevelFormat.BULLET,
+                text: "▪",
+                alignment: AlignmentType.LEFT,
+                style: {
+                  run: { font: BODY, color: NAVY, size: 18 },
+                  paragraph: { indent: { left: 300, hanging: 300 } },
+                },
+              },
+            ],
           },
-        },
+        ],
       },
       sections: [
         {
-          footers: {
-            default: new Footer({
-              children: [
-                new Paragraph({
-                  children: [
-                    new TextRun({
-                      text: "FINANCIAL EXPERTISE  •  DIGITAL EXCELLENCE  •  STRATEGIC IMPACT",
-                      size: 14,
-                      color: "999999",
-                      characterSpacing: 10,
-                      font: "Aptos",
-                    }),
-                  ],
-                  alignment: AlignmentType.CENTER,
-                  spacing: { before: 80 },
-                }),
-              ],
-            }),
-          },
           properties: {
             page: {
-              size: { width: 11906, height: 16838 }, // A4 in twips
-              margin: {
-                top: L(0.55),
-                bottom: L(0.65),
-                left: L(0),
-                right: L(0),
-                footer: L(0.25),
-              },
+              size: { width: PAGE_W, height: PAGE_H },
+              margin: { ...MARGIN, footer: mm(9), header: mm(8) },
             },
           },
-          children: [
-            // ── HEADER TABLE ────────────────────────────────────────────────
-            new Table({
-              width: { size: 100, type: WidthType.PERCENTAGE },
-              borders: {
-                top:              { style: BorderStyle.NONE },
-                bottom:           { style: BorderStyle.NONE },
-                left:             { style: BorderStyle.NONE },
-                right:            { style: BorderStyle.NONE },
-                insideHorizontal: { style: BorderStyle.NONE },
-                insideVertical:   { style: BorderStyle.NONE },
-              },
-              rows: [
-                // Gradient rows: near-white → navy (masks the white top margin)
-                ...gradientRows(),
-
-                // Main navy content row
-                new TableRow({
-                  children: [
-                    new TableCell({
-                      shading: { fill: NAVY, type: ShadingType.CLEAR },
-                      margins: {
-                        top: L(0.35),
-                        bottom: L(0.12),
-                        left: L(0.6),
-                        right: L(0.6),
-                      },
-                      borders: noBorder(),
-                      children: [
-                        // Logo left — "Strictly Confidential" right-aligned via tab stop
-                        new Paragraph({
-                          children: logoPng
-                            ? [
-                                new ImageRun({
-                                  data: logoPng,
-                                  transformation: { width: 110, height: 22 },
-                                  type: "png",
-                                }),
-                                new TextRun({ text: "\t" }),
-                                new TextRun({
-                                  text: isSpanish ? "Estrictamente Confidencial" : "Strictly Confidential",
-                                  size: 15,
-                                  color: "777777",
-                                  characterSpacing: 20,
-                                  font: "Aptos",
-                                }),
-                              ]
-                            : [
-                                new TextRun({ text: "ZINNIA GROUP", bold: true, size: 30, color: "FFFFFF", characterSpacing: 60, font: "Aptos" }),
-                                new TextRun({ text: "\t" }),
-                                new TextRun({ text: isSpanish ? "Estrictamente Confidencial" : "Strictly Confidential", size: 15, color: "777777", characterSpacing: 20, font: "Aptos" }),
-                              ],
-                          // Right tab at 7.3" = page 8.5" minus 0.6" left + 0.6" right cell padding
-                          tabStops: [{ type: TabStopType.RIGHT, position: L(7.3) }],
-                          spacing: { after: 240 },
-                        }),
-                        new Paragraph({
-                          children: [
-                            new TextRun({ text: isSpanish ? "PREPARADO PARA:" : "PREPARED FOR:", size: 14, color: "888888", characterSpacing: 30, font: "Aptos" }),
-                          ],
-                          spacing: { after: 60 },
-                        }),
-                        new Paragraph({
-                          children: [
-                            new TextRun({ text: formData.prospectName, bold: true, size: 52, color: GREEN, font: "Aptos" }),
-                          ],
-                          spacing: { after: 100 },
-                        }),
-                        new Paragraph({
-                          children: [
-                            new TextRun({ text: `${isSpanish ? "Fecha" : "Date"}: ${date}`, size: 17, color: "999999", font: "Aptos" }),
-                            ...(formData.websiteUrl
-                              ? [new TextRun({ text: `  |  ${formData.websiteUrl}`, size: 17, color: "999999", font: "Aptos" })]
-                              : []),
-                          ],
-                          spacing: { after: 280 },
-                        }),
-                      ],
-                    }),
-                  ],
-                }),
-
-                // Services strip (darker navy)
-                new TableRow({
-                  children: [
-                    new TableCell({
-                      shading: { fill: "2A3150", type: ShadingType.CLEAR },
-                      margins: { top: L(0.11), bottom: L(0.11), left: L(0.6), right: L(0.6) },
-                      borders: noBorder(),
-                      children: [
-                        new Paragraph({
-                          children: [
-                            new TextRun({ text: isSpanish ? "SERVICIOS:  " : "SERVICES:  ", size: 14, color: "888888", bold: true, characterSpacing: 20, font: "Aptos" }),
-                            new TextRun({ text: allServices, size: 16, color: GREEN, font: "Aptos" }),
-                          ],
-                        }),
-                      ],
-                    }),
-                  ],
-                }),
-              ],
-            }),
-
-            // ── SPACER ──────────────────────────────────────────────────────
-            new Paragraph({ children: [], spacing: { after: 100 } }),
-
-            // ── BODY ────────────────────────────────────────────────────────
-            ...bodySection(phase1Label, phase1HTML),
-            ...bodySection(phase2Label, phase2HTML),
-            ...(stripHTML(additionalHTML).trim() ? bodySection(addLabel, additionalHTML) : []),
-            ...feeSection(feeLabel, feeHTML),
-
-            // ── CLOSING NOTE (dark navy strip) ───────────────────────────
-            ...(stripHTML(closingHTML).trim()
-              ? [
-                  new Paragraph({ children: [], spacing: { before: 360, after: 0 } }),
-                  new Table({
-                    width: { size: 100, type: WidthType.PERCENTAGE },
-                    rows: [
-                      new TableRow({
-                        children: [
-                          new TableCell({
-                            shading: { fill: "2A3150", type: ShadingType.CLEAR },
-                            margins: { top: L(0.2), bottom: L(0.2), left: L(0.6), right: L(0.6) },
-                            borders: noBorder(),
-                            children: [
-                              new Paragraph({
-                                children: [
-                                  new TextRun({ text: stripHTML(closingHTML), italics: true, size: 19, color: "CCCCCC", font: "Aptos" }),
-                                ],
-                              }),
-                            ],
-                          }),
-                        ],
-                      }),
-                    ],
-                  }),
-                ]
-              : []),
-
-            // ── FOOTER ──────────────────────────────────────────────────────
-            new Paragraph({
-              children: [
-                new TextRun({ text: `ZINNIA Group © ${new Date().getFullYear()}   |   leonardo@zinniagroup.io`, size: 16, color: "AAAAAA", font: "Aptos" }),
-              ],
-              alignment: AlignmentType.CENTER,
-              spacing: { before: 400, after: 200 },
-              border: { top: { style: BorderStyle.SINGLE, size: 4, color: GRAY, space: 4 } },
-              indent: { left: L(0.6), right: L(0.6) },
-            }),
-          ],
+          footers: { default: footer },
+          children: [header, ...title, meta, new Paragraph({ spacing: { after: 200 }, children: [] }), ...sections, ...closing],
         },
       ],
     });
 
-    const buffer = await Packer.toBuffer(doc);
-
-    return new NextResponse(buffer as unknown as BodyInit, {
+    // Keep the brand fonts embedded when Leo edits and re-saves in Word
+    const zip = await JSZip.loadAsync(await Packer.toBuffer(doc));
+    const settings = await zip.file("word/settings.xml")?.async("string");
+    if (settings && !settings.includes("embedTrueTypeFonts")) {
+      zip.file("word/settings.xml", settings.replace(/(<w:settings[^>]*>)/, "$1<w:embedTrueTypeFonts/>"));
+    }
+    const buffer = await zip.generateAsync({ type: "nodebuffer", compression: "DEFLATE" });
+    const slug = m.name.replace(/\s+/g, "-").toLowerCase();
+    return new NextResponse(new Uint8Array(buffer), {
       headers: {
         "Content-Type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        "Content-Disposition": `attachment; filename="zinnia-proposal-${formData.prospectName.replace(/\s+/g, "-").toLowerCase()}.docx"`,
+        "Content-Disposition": `attachment; filename="zinnia-proposal-${slug}.docx"`,
       },
     });
-  } catch (error) {
-    console.error("DOCX export error:", error);
+  } catch (err) {
+    console.error("export-docx error:", err);
     return NextResponse.json({ error: "Failed to generate Word document" }, { status: 500 });
   }
 }

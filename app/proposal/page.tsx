@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import Image from "next/image";
 import { Download, ArrowLeft, Loader2, Check, ChevronDown } from "lucide-react";
 import type { GeneratedProposal } from "@/types/proposal";
+import { buildPrintHTML, buildProposalModel, cleanText, printTitle } from "@/lib/printProposal";
 
 const SERVICE_LABELS: Record<string, string> = {
   linkedin_management: "LinkedIn Management (Essential)",
@@ -24,7 +25,7 @@ function formatContent(text: string): string {
   let inList = false;
 
   for (const line of lines) {
-    const t = line.trim();
+    const t = cleanText(line.trim());
     if (!t) {
       if (inList) { result.push("</ul>"); inList = false; }
       continue;
@@ -80,7 +81,7 @@ export default function ProposalPage() {
     if (feeRef.current)
       feeRef.current.innerHTML = src?.feeStructure ?? formatContent(proposal.content.feeStructure);
     if (closingRef.current)
-      closingRef.current.innerHTML = src?.closingNote ?? (proposal.content.closingNote ? `<p>${proposal.content.closingNote}</p>` : "");
+      closingRef.current.innerHTML = src?.closingNote ?? (proposal.content.closingNote ? `<p>${cleanText(proposal.content.closingNote)}</p>` : "");
   }, [proposal]);
 
   function getEditedHTML() {
@@ -102,111 +103,13 @@ export default function ProposalPage() {
     setTimeout(() => setSaved(false), 2000);
   }
 
-  function buildPrintHTML(): string {
+  function model() {
+    return buildProposalModel(proposal!, getEditedHTML(), SERVICE_LABELS);
+  }
+
+  function printHTML(): string {
     if (!proposal) return "";
-    const p = proposal;
-    const date = new Date(p.generatedAt).toLocaleDateString(
-      p.formData.language === "spanish" ? "es-ES" : "en-US",
-      { year: "numeric", month: "long", day: "numeric" }
-    );
-    const isSpanish = p.formData.language === "spanish";
-    const phase1Label = isSpanish ? "FASE 1: ALINEACIÓN ESTRATÉGICA DE MARCA" : "PHASE 1: ESSENTIAL BRAND STRATEGY ALIGNMENT";
-    const phase2Label = isSpanish ? "FASE 2: POSICIONAMIENTO EN LINKEDIN" : "PHASE 2: POSITIONING – LINKEDIN ESSENTIALS";
-    const addLabel = isSpanish ? "SERVICIOS ADICIONALES" : "ADDITIONAL ESSENTIALS";
-    const feeLabel = isSpanish ? "ESTRUCTURA DE HONORARIOS" : "FEE STRUCTURE & BREAKDOWN";
-    const confidential = isSpanish ? "ZINNIA GROUP | Estrictamente Confidencial" : "ZINNIA GROUP | Strictly Confidential";
-
-    const edited = getEditedHTML();
-
-    const logoSvg = `<svg width="130" height="26" viewBox="0 0 160 32" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M37.3379 28.6284V26.0841L56.7583 4.85914L58.4097 6.19825H37.47V3.52002H59.6648V6.03086L40.2443 27.2893L38.7581 25.9502H59.7639V28.6284H37.3379Z" fill="#fff"/><path d="M62.3377 3.52002H65.4423V28.6284H62.3377V3.52002Z" fill="#fff"/><path d="M92.6372 27.055L91.1179 27.1554V3.52002H94.1235V28.6284H90.1271L71.2682 4.99305L72.7874 4.89261V28.6284H69.7819V3.52002H73.8113L92.6372 27.055Z" fill="#fff"/><path d="M121.304 27.055L119.785 27.1554V3.52002H122.791V28.6284H118.794L99.9354 4.99305L101.455 4.89261V28.6284H98.4491V3.52002H102.479L121.304 27.055Z" fill="#fff"/><path d="M127.116 3.52002H130.221V28.6284H127.116V3.52002Z" fill="#fff"/><path d="M137.104 22.4016V19.7233H154.542V22.4016H137.104ZM147.772 3.52002L159.959 28.6284H156.59L145.129 4.59131H146.781L135.287 28.6284H131.918L144.106 3.52002H147.772Z" fill="#fff"/><path d="M10.9386 11.7915L19.3035 3.27539H27.6684V11.7915L19.3035 20.3077V11.7915H10.9386Z" fill="#DFF266"/><path d="M19.3035 20.3077H27.6684V28.8238H19.3035V20.3077Z" fill="#DFF266"/><path d="M10.9386 11.7915L2.57373 20.3077V28.8238H10.9386L19.3035 20.3077H10.9386V11.7915Z" fill="#DFF266"/><path d="M10.9386 11.7915H2.57373V3.27539H10.9386V11.7915Z" fill="#DFF266"/></svg>`;
-
-    const sectionBlock = (label: string, html: string, extraClass = "") => {
-      if (!html || !html.replace(/<[^>]*>/g, "").trim()) return "";
-      return `<div class="section ${extraClass}"><div class="section-title">${label}</div><div class="section-body">${html}</div></div>`;
-    };
-
-    const allServices = [
-      ...p.formData.services.map(s => SERVICE_LABELS[s] || s),
-      ...(p.formData.customService?.trim() ? [p.formData.customService.trim()] : []),
-    ];
-    const services = allServices.map(s => `<span class="tag">${s}</span>`).join("");
-
-    return `<!DOCTYPE html>
-<html lang="${isSpanish ? "es" : "en"}">
-<head>
-<meta charset="UTF-8">
-<title>Zinnia — ${p.formData.prospectName}</title>
-<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&display=swap" rel="stylesheet">
-<style>
-* { margin:0; padding:0; box-sizing:border-box; -webkit-print-color-adjust:exact; print-color-adjust:exact; }
-body { font-family:'Space Grotesk',sans-serif; background:#fff; color:#1B2035; font-size:13px; line-height:1.65; }
-.doc { max-width:780px; margin:0 auto; background:#fff; }
-.header { background:#1B2035; padding:36px 48px 28px; }
-.header-top { display:flex; justify-content:space-between; align-items:center; margin-bottom:28px; }
-.conf { color:rgba(255,255,255,.35); font-size:10px; letter-spacing:.14em; text-transform:uppercase; }
-.prospect-label { font-size:10px; color:rgba(255,255,255,.45); letter-spacing:.12em; text-transform:uppercase; margin-bottom:4px; }
-.prospect-name { font-size:26px; font-weight:700; color:#DFF266; letter-spacing:-.01em; margin-bottom:10px; }
-.meta { font-size:11px; color:rgba(255,255,255,.5); }
-.tags { background:#2A3150; padding:12px 48px; display:flex; flex-wrap:wrap; gap:6px; align-items:center; }
-.tags-label { font-size:10px; color:rgba(255,255,255,.35); letter-spacing:.12em; text-transform:uppercase; margin-right:6px; }
-.tag { background:rgba(223,242,102,.15); color:#DFF266; font-size:10px; padding:3px 8px; border-radius:2px; font-weight:500; }
-.body { padding:36px 48px; }
-.section { margin-bottom:32px; }
-.section-title { font-size:10px; font-weight:700; letter-spacing:.14em; text-transform:uppercase; color:rgba(27,32,53,.4); padding-bottom:10px; border-bottom:1px solid #E8EAF0; margin-bottom:14px; }
-.section-body p { margin-bottom:7px; }
-.section-body ul, .section-body .zn-list { list-style:none; margin:6px 0; padding:0; }
-.section-body li { padding:3px 0 3px 16px; position:relative; }
-.section-body li::before { content:''; position:absolute; left:0; top:10px; width:5px; height:5px; background:#DFF266; border-radius:50%; }
-.section-body strong, .section-body .zn-label { font-weight:700; }
-.fee-section .section-body { background:#F7F8FC; padding:18px 22px; border-left:3px solid #DFF266; }
-.closing { background:#1B2035; padding:20px 48px; }
-.closing p, .closing div, .closing span { color:rgba(255,255,255,.7); font-size:12px; line-height:1.7; }
-.footer { background:#1B2035; border-top:1px solid rgba(255,255,255,.08); padding:16px 48px; display:flex; justify-content:space-between; align-items:center; }
-.footer-l { color:rgba(255,255,255,.3); font-size:10px; letter-spacing:.06em; text-transform:uppercase; }
-.footer-r { color:rgba(255,255,255,.5); font-size:11px; }
-.footer-r a { color:#DFF266; text-decoration:none; }
-/* A4 print: first page full-bleed header, following pages get top breathing room */
-@page { size: A4; margin: 14mm 0 14mm 0; }
-@page :first { margin-top: 0; }
-@media print {
-  html, body { height:auto; }
-  .doc { max-width:100%; }
-  .section-title { break-after: avoid; page-break-after: avoid; }
-  .section-body p, .section-body li { break-inside: avoid; page-break-inside: avoid; orphans:3; widows:3; }
-  .header, .tags, .fee-section, .closing, .footer { break-inside: avoid; page-break-inside: avoid; }
-  .closing + .footer { break-before: avoid; page-break-before: avoid; }
-}
-</style>
-</head>
-<body>
-<div class="doc">
-  <div class="header">
-    <div class="header-top">
-      ${logoSvg}
-      <div class="conf">${confidential}</div>
-    </div>
-    <div class="prospect-label">${isSpanish ? "Preparado para:" : "Prepared for:"}</div>
-    <div class="prospect-name">${p.formData.prospectName}</div>
-    <div class="meta">${isSpanish ? "Fecha:" : "Date:"} ${date}${p.formData.websiteUrl ? ` &nbsp;|&nbsp; ${p.formData.websiteUrl}` : ""}</div>
-  </div>
-  <div class="tags">
-    <span class="tags-label">${isSpanish ? "Servicios:" : "Services:"}</span>
-    ${services}
-  </div>
-  <div class="body">
-    ${sectionBlock(phase1Label, edited.phase1)}
-    ${sectionBlock(phase2Label, edited.phase2)}
-    ${sectionBlock(addLabel, edited.additional)}
-    ${sectionBlock(feeLabel, edited.feeStructure, "fee-section")}
-  </div>
-  ${edited.closingNote && edited.closingNote.replace(/<[^>]*>/g, "").trim() ? `<div class="closing">${edited.closingNote}</div>` : ""}
-  <div class="footer">
-    <div class="footer-l">Zinnia Group © ${new Date().getFullYear()}</div>
-    <div class="footer-r"><a href="mailto:leonardo@zinniagroup.io">leonardo@zinniagroup.io</a></div>
-  </div>
-</div>
-</body>
-</html>`;
+    return buildPrintHTML(model());
   }
 
   function slug() {
@@ -215,7 +118,7 @@ body { font-family:'Space Grotesk',sans-serif; background:#fff; color:#1B2035; f
 
   function handleDownloadHTML() {
     if (!proposal) return;
-    const blob = new Blob([buildPrintHTML()], { type: "text/html" });
+    const blob = new Blob([printHTML()], { type: "text/html" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
@@ -228,14 +131,27 @@ body { font-family:'Space Grotesk',sans-serif; background:#fff; color:#1B2035; f
   function handleDownloadPDF() {
     if (!proposal) return;
     setDropdownTop(false); setDropdownBottom(false);
-    const html = buildPrintHTML();
-    const win = window.open("", "_blank");
-    if (!win) return;
-    win.document.write(html);
+    // Print from a hidden iframe so the dialog opens over the app instead of a new tab
+    const frame = document.createElement("iframe");
+    frame.setAttribute("aria-hidden", "true");
+    frame.style.cssText = "position:fixed;right:0;bottom:0;width:0;height:0;border:0;visibility:hidden";
+    document.body.appendChild(frame);
+    const win = frame.contentWindow;
+    if (!win) { frame.remove(); return; }
+    win.document.open();
+    win.document.write(printHTML());
     win.document.close();
-    win.focus();
-    // Wait for fonts, then print — pagination comes from the A4 @page rules
-    setTimeout(() => win.print(), 900);
+    // Chrome names the saved PDF after the top document's title
+    const prevTitle = document.title;
+    document.title = printTitle(model());
+    const cleanup = () => { document.title = prevTitle; frame.remove(); };
+    const go = () => {
+      win.addEventListener("afterprint", () => setTimeout(cleanup, 0), { once: true });
+      win.focus();
+      win.print();
+    };
+    const fontsReady = win.document.fonts?.ready ?? Promise.resolve();
+    Promise.race([fontsReady, new Promise((r) => setTimeout(r, 2500))]).then(() => setTimeout(go, 150));
   }
 
   async function handleDownloadWord() {
@@ -243,7 +159,7 @@ body { font-family:'Space Grotesk',sans-serif; background:#fff; color:#1B2035; f
     setDownloading("word");
     setDropdownTop(false); setDropdownBottom(false);
     try {
-      const payload = { ...proposal, editedHTML: getEditedHTML() };
+      const payload = { model: model() };
       const res = await fetch("/api/export-docx", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -304,7 +220,7 @@ body { font-family:'Space Grotesk',sans-serif; background:#fff; color:#1B2035; f
           <div className="w-px h-4 bg-white/20" />
           <Image src="/zinnia-logo-white.svg" alt="Zinnia" width={90} height={18} />
           <span className="text-white/40 text-sm">
-            — <span className="text-white/80 font-medium">{formData.prospectName}</span>
+            | <span className="text-white/80 font-medium">{formData.prospectName}</span>
             <span className="ml-2 text-[10px] text-white/25 uppercase tracking-widest">
               Template {template}
             </span>
@@ -363,7 +279,7 @@ body { font-family:'Space Grotesk',sans-serif; background:#fff; color:#1B2035; f
               {isSpanish ? "Preparado para:" : "Prepared for:"}
             </div>
             <div className="text-[#DFF266] text-3xl font-bold mb-3">{formData.prospectName}</div>
-            <div className="text-white/40 text-xs">{date}{formData.websiteUrl ? ` · ${formData.websiteUrl}` : ""}</div>
+            <div className="text-white/40 text-xs">{date}{formData.websiteUrl ? ` | ${formData.websiteUrl}` : ""}</div>
           </div>
           <div className="bg-[#2A3150] px-8 py-3 flex flex-wrap gap-2 items-center">
             <span className="text-white/25 text-[10px] uppercase tracking-widest mr-1">
@@ -419,7 +335,7 @@ body { font-family:'Space Grotesk',sans-serif; background:#fff; color:#1B2035; f
           </div>
         )}
 
-        <div className={`${sectionClass} border-l-4 border-[#DFF266]`}>
+        <div className={sectionClass}>
           <div className={sectionHeaderClass}>
             <span className={sectionLabelClass}>
               {isSpanish ? "Estructura de Honorarios" : "Fee Structure & Breakdown"}

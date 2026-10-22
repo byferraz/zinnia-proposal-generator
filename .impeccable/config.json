@@ -1,0 +1,20 @@
+{
+  "detector": {
+    "ignoreRules": [],
+    "ignoreFiles": [],
+    "ignoreValues": [
+      {
+        "rule": "overused-font",
+        "value": "space grotesk",
+        "createdAt": "2026-10-22T21:29:19.645Z",
+        "reason": "Zinnia brand typeface (Space Grotesk + Geist per Zinnia Posts design system); not a generic choice"
+      },
+      {
+        "rule": "overused-font",
+        "value": "geist",
+        "createdAt": "2026-10-22T22:26:39.700Z",
+        "reason": "Zinnia brand body face (Space Grotesk + Geist per Zinnia Posts design system and PRODUCT.md brand commitments)"
+      }
+    ]
+  }
+}

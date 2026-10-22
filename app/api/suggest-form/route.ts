@@ -31,7 +31,7 @@ Guidelines:
 - Most wealth management firms need: full_stack + one_pager at minimum
 - Suggest media_amplification only if they seem established
 - Price range: $1,500-$3,000/mo depending on scope
-- Be concise and specific in notes — reference what you actually found on their website`,
+- Be concise and specific in notes - reference what you actually found on their website`,
       messages: [
         {
           role: "user",
@@ -41,7 +41,7 @@ LinkedIn: ${linkedinUrl || "not provided"}${
   websiteContent
     ? `\n\nWebsite content (scraped):\n${websiteContent}`
     : websiteUrl
-    ? "\n\n(Website could not be scraped — use general knowledge)"
+    ? "\n\n(Website could not be scraped - use general knowledge)"
     : ""
 }
 

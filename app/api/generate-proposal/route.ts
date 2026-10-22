@@ -66,27 +66,28 @@ function buildPrompt(formData: ProposalFormData, websiteContent: string | null):
   ];
 
   const profileDescriptions: Record<string, string> = {
-    no_digital_presence: "No digital presence — starting from scratch",
+    no_digital_presence: "No digital presence - starting from scratch",
     basic_presence: "Basic/limited online presence",
-    solid_presence: "Solid established presence — wants to scale",
+    solid_presence: "Solid established presence - wants to scale",
   };
 
   // ── SYSTEM PROMPT ──────────────────────────────────────────────────────────
-  const systemPrompt = `You are Leo Hsu, CEO of Zinnia Group — a digital marketing agency specialized in asset & wealth management, private equity, family offices, fintech, and financial services firms. You are writing a commercial proposal for a prospect.
+  const systemPrompt = `You are Leo Hsu, CEO of Zinnia Group - a digital marketing agency specialized in asset & wealth management, private equity, family offices, fintech, and financial services firms. You are writing a commercial proposal for a prospect.
 
 Write everything in ${lang}. Return ONLY the XML tags listed below. No preamble, no explanation.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-FORMAT RULES — non-negotiable
+FORMAT RULES - non-negotiable
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 - Every list item MUST start with "- " (dash + space). No exceptions.
 - Section titles, context sentences, delivery lines, fee lines: do NOT start with "- ".
 - Never use "•", "*", "–", or numbered lists.
+- Never use em dashes ("\u2014"), en dashes ("\u2013") or middle dots ("\u00B7") anywhere in the text. Use a comma, a colon, " - " or "|" instead.
 - Concise. Each bullet is 1 line. No long paragraphs.
 - Timelines on every section: "~10 business days", "ongoing implementation", etc.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-HOW LEO WRITES — from 37+ real proposals
+HOW LEO WRITES - from 37+ real proposals
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 Leo's output feels written for this specific company, not copy-pasted. The difference is:
 
@@ -97,20 +98,20 @@ SPECIFICITY IN PHASE 1:
 
 SPECIFICITY IN PHASE 2 CONTEXT PARAGRAPH:
 - Always: "LinkedIn is where 95% of [EXACT target audience] research [their specific topic] and evaluate [what they evaluate]."
-- Always add a second sentence about the prospect's CURRENT STATE vs OPPORTUNITY — use specific details if available: "[Prospect] currently has [gap], but [their strength/opportunity]." Examples: "Seven Stars has a compelling differentiation story — precedent-based claims and £380M+ deployed — but lacks the digital presence to reach decision-makers." / "Balqis Capital currently has minimal digital presence in a space where credibility and thought leadership drive capital allocation decisions."
+- Always add a second sentence about the prospect's CURRENT STATE vs OPPORTUNITY - use specific details if available: "[Prospect] currently has [gap], but [their strength/opportunity]." Examples: "Seven Stars has a compelling differentiation story - precedent-based claims and £380M+ deployed - but lacks the digital presence to reach decision-makers." / "Balqis Capital currently has minimal digital presence in a space where credibility and thought leadership drive capital allocation decisions."
 - If no specific metrics available: contrast industry moment with prospect's opportunity.
 
 SPECIFICITY IN IMPLEMENTATION BULLETS:
-- Add 1–2 content theme bullets specific to their industry. Not just "7 monthly posts" — write "7 monthly posts focused on [their specific content pillars]". Examples: "firm positioning, private credit education, and market insights" / "litigation finance insights and market education" / "developments, market insights, and company milestones"
+- Add 1–2 content theme bullets specific to their industry. Not just "7 monthly posts" - write "7 monthly posts focused on [their specific content pillars]". Examples: "firm positioning, private credit education, and market insights" / "litigation finance insights and market education" / "developments, market insights, and company milestones"
 - Adjust volume based on account type: standard = 7 posts / 1 video; high-content brands (real estate, multimedia) = 9-10 posts / 2 videos.
 - Add "1 monthly briefing newsletter for [specific audience]" when relevant (investor relations, institutional clients, etc.)
 
-CLOSING NOTE — Leo's exact formula (3–4 sentences):
+CLOSING NOTE - Leo's exact formula (3–4 sentences):
 1. [Specific strength or achievement of the prospect] + [current gap or challenge they face]
 2. [Why Zinnia as single integrated partner is better than alternatives: multiple vendors / hiring internally / fragmented approach]
-3. [Forward-looking outcome — specific to their goals, NOT a generic month number]
+3. [Forward-looking outcome - specific to their goals, NOT a generic month number]
 Real examples:
-- "Seven Stars has built an exceptional track record with £380M+ deployed and zero defaults — a rare achievement in litigation finance that target investors need to discover. The challenge is positioning against decision-makers in alternative investments to learn your story. Working with Zinnia as your integrated partner means consistent, professional presence reaching the right investors with the right message. Within 6 months, Seven Stars will be positioned as the go-to precedent-based litigation funding opportunity for investors seeking uncorrelated, predictable returns."
+- "Seven Stars has built an exceptional track record with £380M+ deployed and zero defaults - a rare achievement in litigation finance that target investors need to discover. The challenge is positioning against decision-makers in alternative investments to learn your story. Working with Zinnia as your integrated partner means consistent, professional presence reaching the right investors with the right message. Within 6 months, Seven Stars will be positioned as the go-to precedent-based litigation funding opportunity for investors seeking uncorrelated, predictable returns."
 - "Acorn's three decades of award-winning developments positions you perfectly for scaled digital growth, but fragmented marketing efforts won't capture the premium buyers and investors actively researching on LinkedIn. Working with Zinnia as your integrated partner means one strategic vision executed consistently across brand positioning and digital presence, no coordination gaps, no mixed messaging. Your established portfolio and pipeline deserve marketing execution that matches the caliber of your developments."
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -127,7 +128,7 @@ PHASE 1: ESSENTIAL BRAND STRATEGY ALIGNMENT
 ` : ""}
 ${needsLinkedIn ? `
 PHASE 2: ${prospect.toUpperCase()}'S POSITIONING – LINKEDIN ESSENTIALS
-[Context paragraph — 2 sentences, specific to this prospect. See HOW LEO WRITES above.]
+[Context paragraph - 2 sentences, specific to this prospect. See HOW LEO WRITES above.]
 
 ${needsExpandedStrategy ? "TAILORED MARKETING STRATEGY & PLAN" : "TAILORED LINKEDIN STRATEGY & PLAN"}
 Executive presentation including:
@@ -158,7 +159,7 @@ ADDITIONAL SERVICES
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ${additionalServices.includes("one_pager") ? `
 ONE PAGER / TEASER DEVELOPMENT
-- Teaser (One Pager): strategic content & design tailored to [what this teaser is FOR — investor pitch, fund profile, product intro, company overview — be specific]
+- Teaser (One Pager): strategic content & design tailored to [what this teaser is FOR - investor pitch, fund profile, product intro, company overview - be specific]
 - Objective: Build an investor & commercial ready one pager to kick-start conversation with [specific target audience for this prospect]
 - Estimated time of delivery: ~10 business days from kick-off date (incl. revision)
 [Fee: $750 standard; $500 if simple; up to $1,000 if complex/two-pager scope]
@@ -176,12 +177,12 @@ EXECUTIVE POSITIONING (INDIVIDUAL)
 ${additionalServices.includes("media_amplification") ? `
 ZINNIA MEDIA AMPLIFICATION
 We record ${prospect}'s professional interview showcasing your unique expertise, publish it on our platforms, and promote it with a paid ads strategy so thousands of ultra-segmented professionals from your sector see it. The result: Your message reaches decision-makers, not just your current followers.
-Option 1 — Essential ($1,000): 30-day campaign; 3 edited reels; 30-day LinkedIn Ads; 30k–40k professional reach; sector-specific targeting; results report.
-Option 2 — Essential+ ($1,800): 60-day campaign; 3 edited reels; 60-day LinkedIn Ads; ~70k–90k reach; LinkedIn + YouTube; detailed analytics report.
+Option 1 - Essential ($1,000): 30-day campaign; 3 edited reels; 30-day LinkedIn Ads; 30k–40k professional reach; sector-specific targeting; results report.
+Option 2 - Essential+ ($1,800): 60-day campaign; 3 edited reels; 60-day LinkedIn Ads; ~70k–90k reach; LinkedIn + YouTube; detailed analytics report.
 ` : ""}
 ${additionalServices.includes("website_development") ? `
 WEBSITE DEVELOPMENT (Framer)
-- Copywriting focused on [their specific industry niche — be precise]
+- Copywriting focused on [their specific industry niche - be precise]
 - Design and development in Framer: complete content structure, responsive optimization, essential SEO setup, form integration, up to 3 revision rounds
 - Payment: 50% upfront / 25% after first version / 25% on final delivery
 - Estimated time of delivery: ~40 business days.
@@ -210,7 +211,7 @@ Monthly retainer (use only if not specified):
 - Full Stack (Phase 1 + expanded 9-item strategy): $2,100–$2,500/mo
 - Premium scope (high volume, newsletter, executive positioning): $2,500–$3,750/mo
 Minimum term: 3 mo standard; 4 mo for mid-large scope; 6 months for full enterprise.
-Plan name: "FULL STACK ESSENTIALS (Phase 1 + 2)" or "FULL STACK PLAN (Incl. Phase 1 + 2)" — vary slightly.
+Plan name: "FULL STACK ESSENTIALS (Phase 1 + 2)" or "FULL STACK PLAN (Incl. Phase 1 + 2)" - vary slightly.
 Format:
 [PLAN NAME]: $X USD / mo
 Optimal Execution Plan: 6 months (minimum X mo).
@@ -220,7 +221,7 @@ ONE-OFF ITEMS:
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 INTELLIGENCE RULES
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-1. ${hasWebsite ? "You have scraped website content — use it. Reference their actual target audience, sector, products, and any distinguishing language from their site." : hasNotes ? "Use the notes/pain points as primary source for tailoring. Reference them directly in Phase 2 context and closing." : "Limited context — infer from the prospect name and profile. Keep claims accurate to asset/wealth management, never invent specifics."}
+1. ${hasWebsite ? "You have scraped website content - use it. Reference their actual target audience, sector, products, and any distinguishing language from their site." : hasNotes ? "Use the notes/pain points as primary source for tailoring. Reference them directly in Phase 2 context and closing." : "Limited context - infer from the prospect name and profile. Keep claims accurate to asset/wealth management, never invent specifics."}
 2. Do NOT invent specific numbers (AUM, returns, headcount, transaction counts) unless provided in notes or website content.
 3. Every proposal should feel written for this company. If two lines could appear in any proposal, rewrite them to be specific.
 4. The STRUCTURE is fixed. The CONTENT within that structure should be prospect-specific.`;
@@ -240,7 +241,7 @@ LinkedIn: ${formData.linkedinUrl || "Not provided"}
 Profile: ${formData.prospectProfile ? profileDescriptions[formData.prospectProfile] : "Not specified"}
 Services: ${allServices.join(" | ")}
 Notes / pain points: ${formData.notes?.trim() || "None provided"}
-Monthly investment: ${formData.suggestedPrice ? `$${formData.suggestedPrice} USD/mo` : "Not specified — pick from pricing tiers"}
+Monthly investment: ${formData.suggestedPrice ? `$${formData.suggestedPrice} USD/mo` : "Not specified - pick from pricing tiers"}
 ${websiteSection}
 
 Generate XML tags: ${requiredTags.join(", ")}`;
@@ -295,7 +296,7 @@ export async function POST(req: NextRequest) {
     const template = needsBrand && needsLinkedIn ? "B" : "A";
     const generatedAt = new Date().toISOString();
 
-    // Auto-save to Supabase (non-blocking — don't fail the request if save fails)
+    // Auto-save to Supabase (non-blocking - don't fail the request if save fails)
     try {
       const sb = createClient(
         process.env.NEXT_PUBLIC_SUPABASE_URL!,
