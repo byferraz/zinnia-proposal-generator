@@ -5,18 +5,23 @@ import type { GeneratedProposal } from "@/types/proposal";
 // model; buildPrintHTML (HTML download + print/PDF) and the Word export
 // (/api/export-docx) both render from that same model.
 
+export type SectionKey = "phase1" | "phase2" | "additional" | "feeStructure";
+
 export interface EditedSections {
   phase1: string;
   phase2: string;
   additional: string;
   feeStructure: string;
   closingNote: string;
+  // Section titles edited in the generator (override the AI heading)
+  titles?: Partial<Record<SectionKey, string>>;
 }
 
 export interface Run { text: string; bold?: boolean }
 export type BlockType = "p" | "sub" | "dur" | "price" | "li";
 export interface Block { type: BlockType; runs: Run[] }
 export interface ModelSection {
+  key: SectionKey;
   num: string;
   gutter: string;
   title: string;
@@ -133,7 +138,8 @@ function extractBlocks(html: string): Block[] {
       Array.from(el.children).forEach(visit);
     } else {
       const runs = toRuns(el);
-      if (runs.length) blocks.push({ type: "p", runs });
+      const cls = (["dur", "sub", "price"] as const).find((c) => el.classList.contains(c));
+      if (runs.length) blocks.push({ type: cls ?? "p", runs });
     }
   };
   Array.from(root.children).forEach(visit);
@@ -199,18 +205,21 @@ export function buildProposalModel(
   const keep = [name, ...name.split(/\s+/), ...KEEP_BASE];
   const drop = ["servicios adicionales", "additional essentials", "additional services", "estructura de honorarios", "fee structure & breakdown", "fee structure"];
   const defs = [
-    { html: edited.phase1, gutter: L.p1, title: L.p1t, kind: "phase" as const, drop },
-    { html: edited.phase2, gutter: L.p2, title: L.p2t, kind: "phase" as const, drop },
-    { html: edited.additional, gutter: L.add, title: L.addt, kind: "phase" as const, drop },
-    { html: edited.feeStructure, gutter: L.fee, title: L.feet, kind: "fee" as const, drop: [...drop, "estructura de inversión", "investment structure"] },
+    { key: "phase1" as const, html: edited.phase1, gutter: L.p1, title: L.p1t, kind: "phase" as const, drop },
+    { key: "phase2" as const, html: edited.phase2, gutter: L.p2, title: L.p2t, kind: "phase" as const, drop },
+    { key: "additional" as const, html: edited.additional, gutter: L.add, title: L.addt, kind: "phase" as const, drop },
+    { key: "feeStructure" as const, html: edited.feeStructure, gutter: L.fee, title: L.feet, kind: "fee" as const, drop: [...drop, "estructura de inversión", "investment structure"] },
   ];
   const sections: ModelSection[] = [];
   let feeBlocks: Block[] = [];
   for (const d of defs) {
-    const { title, blocks } = tidySection(d.html, d.title, d.drop, keep, d.kind === "fee");
+    const tidy = tidySection(d.html, d.title, d.drop, keep, d.kind === "fee");
+    const blocks = tidy.blocks;
     if (!blocks.length) continue;
+    const edTitle = edited.titles?.[d.key]?.trim();
+    const title = edTitle ? cleanText(edTitle) : tidy.title;
     if (d.kind === "fee") feeBlocks = blocks;
-    sections.push({ num: String(sections.length + 1).padStart(2, "0"), gutter: d.gutter, title, kind: d.kind, blocks });
+    sections.push({ key: d.key, num: String(sections.length + 1).padStart(2, "0"), gutter: d.gutter, title, kind: d.kind, blocks });
   }
   return {
     lang: es ? "es" : "en",
@@ -236,7 +245,7 @@ const LOGO_DARK = `<svg width="112" height="22" viewBox="0 0 160 32" fill="none"
 
 const runsHTML = (runs: Run[]) => runs.map((r) => (r.bold ? `<strong>${esc(r.text)}</strong>` : esc(r.text))).join("");
 
-function blocksHTML(blocks: Block[]): string {
+export function blocksHTML(blocks: Block[]): string {
   const out: string[] = [];
   let inList = false;
   for (const b of blocks) {
@@ -252,7 +261,76 @@ function blocksHTML(blocks: Block[]): string {
   return out.join("\n");
 }
 
+export const closingHTML = (m: ProposalModel) => m.closing.map((r) => `<p>${runsHTML(r)}</p>`).join("");
+
 export const printTitle = (m: ProposalModel) => `Zinnia - ${m.name}`;
+
+export const MEMO_FONTS_HREF =
+  "https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Geist:wght@400;500;600&display=swap";
+
+// Shared by the in-app editor and the exported HTML/PDF, so the generator
+// shows exactly what prints. Everything is scoped under .memo.
+export const MEMO_CSS = `
+.memo { --navy:#1B2035; --lime:#DFF266; --blue:#D1E2F4; --rule:#E3E6EE; --mut:#565C72;
+  font-family:'Geist',system-ui,sans-serif; color:var(--navy); font-size:13px; line-height:1.6; -webkit-font-smoothing:antialiased; font-variant-numeric:tabular-nums;
+  width:210mm; min-height:297mm; margin:0 auto; background:#fff; padding:16mm 18mm 18mm; box-shadow:0 1px 2px rgba(27,32,53,.08), 0 8px 28px rgba(27,32,53,.10); display:flex; flex-direction:column; }
+.memo * { margin:0; padding:0; box-sizing:border-box; -webkit-print-color-adjust:exact; print-color-adjust:exact; }
+.memo ::selection { background:var(--lime); color:var(--navy); }
+.memo h1, .memo h2, .memo .num, .memo .sub, .memo .amt, .memo .price { font-family:'Space Grotesk',system-ui,sans-serif; }
+.memo .top { display:flex; justify-content:space-between; align-items:center; margin-bottom:24px; }
+.memo .conf { font-size:9.5px; letter-spacing:.14em; text-transform:uppercase; color:var(--mut); }
+.memo h1 { font-size:31px; line-height:1.12; font-weight:600; letter-spacing:-.015em; margin-bottom:20px; text-wrap:balance; }
+.memo h1 mark { background:linear-gradient(transparent 60%, var(--lime) 60%); color:inherit; padding:0 2px; -webkit-box-decoration-break:clone; box-decoration-break:clone; }
+.memo table.meta { width:100%; border-collapse:collapse; font-size:12.5px; margin-bottom:30px; }
+.memo .meta td { padding:7px 0; border-top:1px solid var(--rule); vertical-align:top; }
+.memo .meta tr:last-child td { border-bottom:1px solid var(--rule); }
+.memo .meta td.k { width:128px; color:var(--mut); }
+.memo .chip { display:inline-block; border:1px solid #C6CBD9; border-radius:3px; padding:0 7px; margin:1px 4px 3px 0; font-size:11.5px; }
+.memo .meta tr.inv td { background:var(--navy); color:#fff; border-color:var(--navy); padding:10px 0; }
+.memo .meta tr.inv td.k { color:#B6BCCE; padding-left:12px; }
+.memo .inv .amt { display:block; font-size:19px; font-weight:600; line-height:1.25; color:var(--lime); white-space:nowrap; }
+.memo .inv .plan { font-size:12px; color:#E4E7EF; }
+.memo .sec { position:relative; padding-left:128px; margin-bottom:26px; }
+.memo .gut { position:absolute; left:0; top:0; }
+.memo .num { font-size:38px; font-weight:600; line-height:.95; letter-spacing:-.02em; }
+.memo .gl { font-size:9.5px; letter-spacing:.12em; text-transform:uppercase; color:var(--mut); margin-top:8px; }
+.memo h2 { font-size:17.5px; font-weight:600; line-height:1.3; letter-spacing:-.01em; margin:2px 0 10px; text-wrap:balance; }
+.memo .body p { margin-bottom:7px; }
+.memo .body p.sub { font-size:13.5px; font-weight:600; margin:14px 0 5px; }
+.memo .body p.dur { display:inline-block; background:var(--blue); border-radius:3px; padding:1px 8px; font-size:11.5px; margin:4px 0 12px; }
+.memo .body ul { list-style:none; margin:4px 0 10px; }
+.memo .body li { position:relative; padding-left:16px; margin:3px 0; }
+.memo .body li::before { content:""; position:absolute; left:1px; top:.62em; width:5px; height:5px; background:var(--navy); }
+.memo .body strong, .memo .body b { font-weight:600; }
+.memo .fee .body { background:#F3F5F9; border-radius:6px; padding:16px 20px 10px; }
+.memo .fee .body p.price { font-size:15px; font-weight:600; margin:2px 0 6px; }
+.memo .closing { margin-top:8px; padding:18px 0 0 128px; border-top:1px solid var(--navy); }
+.memo .closing p { font-size:13.5px; line-height:1.65; margin-bottom:8px; }
+.memo .sign { margin-top:12px; font-size:12px; color:var(--mut); line-height:1.5; }
+.memo .sign b { color:var(--navy); font-weight:600; }
+.memo .foot { margin-top:auto; padding-top:28px; }
+.memo .foot div { display:flex; justify-content:space-between; border-top:1px solid var(--rule); padding-top:8px; font-size:8pt; color:var(--mut); }
+.memo .foot span:first-child { letter-spacing:.06em; text-transform:uppercase; }
+`;
+
+export function memoHeaderHTML(m: ProposalModel): string {
+  const L = m.labels;
+  return `<header class="top">${LOGO_DARK}<div class="conf">${L.conf}</div></header>
+  <h1>${L.titleA}<br>${L.titleB} <mark>${esc(m.name)}</mark></h1>
+  <table class="meta">
+    <tr><td class="k">${L.for}</td><td>${esc(m.name)}${m.site ? ` | ${esc(m.site)}` : ""}</td></tr>
+    <tr><td class="k">${L.by}</td><td>${esc(m.preparedBy)}</td></tr>
+    <tr><td class="k">${L.date}</td><td>${esc(m.date)}</td></tr>
+    ${m.services.length ? `<tr><td class="k">${L.services}</td><td>${m.services.map((s) => `<span class="chip">${esc(s)}</span>`).join("")}</td></tr>` : ""}
+    ${m.investment ? `<tr class="inv"><td class="k">${L.invest}</td><td><span class="amt">${esc(m.investment.amount)}</span><span class="plan">${esc(m.investment.detail)}</span></td></tr>` : ""}
+  </table>`;
+}
+
+export const signHTML = (m: ProposalModel) => `<div class="sign"><b>${esc(m.preparedBy)}</b><br>${m.contact}</div>`;
+
+// On screen only; on paper the same line comes from the @page margin boxes
+export const screenFooterHTML = (m: ProposalModel) =>
+  `<div class="foot"><div><span>Zinnia Group | ${m.labels.conf}</span><span>${m.contact}</span></div></div>`;
 
 export function buildPrintHTML(m: ProposalModel): string {
   const L = m.labels;
@@ -269,53 +347,11 @@ export function buildPrintHTML(m: ProposalModel): string {
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${esc(printTitle(m))}</title>
-<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Geist:wght@400;500;600&display=swap" rel="stylesheet">
+<link href="${MEMO_FONTS_HREF}" rel="stylesheet">
 <style>
-:root { --navy:#1B2035; --lime:#DFF266; --blue:#D1E2F4; --rule:#E3E6EE; --mut:#565C72; }
-* { margin:0; padding:0; box-sizing:border-box; -webkit-print-color-adjust:exact; print-color-adjust:exact; }
 html { background:#E6E8EE; }
-body { font-family:'Geist',system-ui,sans-serif; color:var(--navy); font-size:13px; line-height:1.6; -webkit-font-smoothing:antialiased; font-variant-numeric:tabular-nums; }
-::selection { background:var(--lime); color:var(--navy); }
-h1, h2, .num, .sub, .amt, .price { font-family:'Space Grotesk',system-ui,sans-serif; }
-
-/* Screen: show the document as an A4 sheet */
-.sheet { width:210mm; min-height:297mm; margin:24px auto; background:#fff; padding:16mm 18mm 18mm; box-shadow:0 1px 2px rgba(27,32,53,.08), 0 8px 28px rgba(27,32,53,.10); }
-
-.top { display:flex; justify-content:space-between; align-items:center; margin-bottom:24px; }
-.conf { font-size:9.5px; letter-spacing:.14em; text-transform:uppercase; color:var(--mut); }
-h1 { font-size:31px; line-height:1.12; font-weight:600; letter-spacing:-.015em; margin-bottom:20px; text-wrap:balance; }
-h1 mark { background:linear-gradient(transparent 60%, var(--lime) 60%); color:inherit; padding:0 2px; -webkit-box-decoration-break:clone; box-decoration-break:clone; }
-
-table.meta { width:100%; border-collapse:collapse; font-size:12.5px; margin-bottom:30px; }
-.meta td { padding:7px 0; border-top:1px solid var(--rule); vertical-align:top; }
-.meta tr:last-child td { border-bottom:1px solid var(--rule); }
-.meta td.k { width:128px; color:var(--mut); }
-.chip { display:inline-block; border:1px solid #C6CBD9; border-radius:3px; padding:0 7px; margin:1px 4px 3px 0; font-size:11.5px; }
-.meta tr.inv td { background:var(--navy); color:#fff; border-color:var(--navy); padding:10px 0; }
-.meta tr.inv td.k { color:#B6BCCE; padding-left:12px; }
-.inv .amt { display:block; font-size:19px; font-weight:600; line-height:1.25; color:var(--lime); white-space:nowrap; }
-.inv .plan { font-size:12px; color:#E4E7EF; }
-
-.sec { position:relative; padding-left:128px; margin-bottom:26px; }
-.gut { position:absolute; left:0; top:0; }
-.num { font-size:38px; font-weight:600; line-height:.95; letter-spacing:-.02em; }
-.gl { font-size:9.5px; letter-spacing:.12em; text-transform:uppercase; color:var(--mut); margin-top:8px; }
-h2 { font-family:'Space Grotesk',system-ui,sans-serif; font-size:17.5px; font-weight:600; line-height:1.3; letter-spacing:-.01em; margin:2px 0 10px; text-wrap:balance; }
-.body p { margin-bottom:7px; }
-.body p.sub { font-size:13.5px; font-weight:600; margin:14px 0 5px; }
-.body p.dur { display:inline-block; background:var(--blue); border-radius:3px; padding:1px 8px; font-size:11.5px; margin:4px 0 12px; }
-.body ul { list-style:none; margin:4px 0 10px; }
-.body li { position:relative; padding-left:16px; margin:3px 0; }
-.body li::before { content:""; position:absolute; left:1px; top:.62em; width:5px; height:5px; background:var(--navy); }
-.body strong { font-weight:600; }
-.fee .body { background:#F3F5F9; border-radius:6px; padding:16px 20px 10px; }
-.fee .body p.price { font-size:15px; font-weight:600; margin:2px 0 6px; }
-
-.closing { margin-top:8px; padding:18px 0 0 128px; border-top:1px solid var(--navy); }
-.closing p { font-size:13.5px; line-height:1.65; margin-bottom:8px; }
-.sign { margin-top:12px; font-size:12px; color:var(--mut); line-height:1.5; }
-.sign b { color:var(--navy); font-weight:600; }
-
+body { margin:0; padding:24px 0; }
+${MEMO_CSS}
 @page {
   size:A4;
   margin:16mm 18mm 20mm;
@@ -327,28 +363,23 @@ h2 { font-family:'Space Grotesk',system-ui,sans-serif; font-size:17.5px; font-we
 }
 @media print {
   html { background:#fff; }
-  .sheet { width:auto; min-height:0; margin:0; padding:0; box-shadow:none; }
-  .top, table.meta, .meta tr, h2, .gut { break-inside:avoid; }
-  h2, .sub { break-after:avoid; }
-  .body li, .body p { break-inside:avoid; orphans:3; widows:3; }
-  .fee .body { break-inside:avoid; }
-  .closing p { break-inside:avoid; }
+  body { padding:0; }
+  .memo { width:auto; min-height:0; margin:0; padding:0; box-shadow:none; display:block; }
+  .memo .foot { display:none; }
+  .memo .top, .memo table.meta, .memo .meta tr, .memo h2, .memo .gut { break-inside:avoid; }
+  .memo h2, .memo .sub { break-after:avoid; }
+  .memo .body li, .memo .body p { break-inside:avoid; orphans:3; widows:3; }
+  .memo .fee .body { break-inside:avoid; }
+  .memo .closing p { break-inside:avoid; }
 }
 </style>
 </head>
 <body>
-<main class="sheet">
-  <header class="top">${LOGO_DARK}<div class="conf">${L.conf}</div></header>
-  <h1>${L.titleA}<br>${L.titleB} <mark>${esc(m.name)}</mark></h1>
-  <table class="meta">
-    <tr><td class="k">${L.for}</td><td>${esc(m.name)}${m.site ? ` | ${esc(m.site)}` : ""}</td></tr>
-    <tr><td class="k">${L.by}</td><td>${esc(m.preparedBy)}</td></tr>
-    <tr><td class="k">${L.date}</td><td>${esc(m.date)}</td></tr>
-    ${m.services.length ? `<tr><td class="k">${L.services}</td><td>${m.services.map((s) => `<span class="chip">${esc(s)}</span>`).join("")}</td></tr>` : ""}
-    ${m.investment ? `<tr class="inv"><td class="k">${L.invest}</td><td><span class="amt">${esc(m.investment.amount)}</span><span class="plan">${esc(m.investment.detail)}</span></td></tr>` : ""}
-  </table>
+<main class="memo">
+  ${memoHeaderHTML(m)}
 ${sectionHTML}
-  ${m.closing.length ? `<section class="closing">${m.closing.map((r) => `<p>${runsHTML(r)}</p>`).join("")}<div class="sign"><b>${esc(m.preparedBy)}</b><br>${m.contact}</div></section>` : ""}
+  ${m.closing.length ? `<section class="closing">${closingHTML(m)}${signHTML(m)}</section>` : ""}
+  ${screenFooterHTML(m)}
 </main>
 </body>
 </html>`;

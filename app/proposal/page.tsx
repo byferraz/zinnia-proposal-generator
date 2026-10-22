@@ -5,7 +5,32 @@ import { useRouter } from "next/navigation";
 import Image from "next/image";
 import { Download, ArrowLeft, Loader2, Check, ChevronDown } from "lucide-react";
 import type { GeneratedProposal } from "@/types/proposal";
-import { buildPrintHTML, buildProposalModel, cleanText, printTitle } from "@/lib/printProposal";
+import {
+  MEMO_CSS,
+  MEMO_FONTS_HREF,
+  blocksHTML,
+  buildPrintHTML,
+  buildProposalModel,
+  cleanText,
+  closingHTML,
+  memoHeaderHTML,
+  printTitle,
+  screenFooterHTML,
+  signHTML,
+  type EditedSections,
+  type ProposalModel,
+  type SectionKey,
+} from "@/lib/printProposal";
+
+// Editing affordances on top of the shared memo styles (screen only)
+const EDITOR_CSS = `
+.memo.editing [contenteditable] { outline:none; border-radius:3px; transition:box-shadow .15s ease-out; cursor:text; }
+.memo.editing [contenteditable]:hover { box-shadow:0 0 0 5px #fff, 0 0 0 6px rgba(27,32,53,.14); }
+.memo.editing [contenteditable]:focus { box-shadow:0 0 0 5px #fff, 0 0 0 7px #C9D94F; }
+.memo.editing .fee .body[contenteditable]:hover, .memo.editing .fee .body[contenteditable]:focus { box-shadow:0 0 0 2px #C9D94F; }
+`;
+
+const SECTION_KEYS: SectionKey[] = ["phase1", "phase2", "additional", "feeStructure"];
 
 const SERVICE_LABELS: Record<string, string> = {
   linkedin_management: "LinkedIn Management (Essential)",
@@ -54,44 +79,63 @@ export default function ProposalPage() {
   const [dropdownBottom, setDropdownBottom] = useState(false);
   const [downloading, setDownloading] = useState<"pdf" | "word" | null>(null);
 
-  const phase1Ref = useRef<HTMLDivElement>(null);
-  const phase2Ref = useRef<HTMLDivElement>(null);
-  const additionalRef = useRef<HTMLDivElement>(null);
-  const feeRef = useRef<HTMLDivElement>(null);
+  const [layout, setLayout] = useState<ProposalModel | null>(null);
+  const [headerHTML, setHeaderHTML] = useState("");
+  const bodyRefs = useRef<Partial<Record<SectionKey, HTMLDivElement | null>>>({});
+  const titleRefs = useRef<Partial<Record<SectionKey, HTMLHeadingElement | null>>>({});
   const closingRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const stored = sessionStorage.getItem("zinnia_proposal");
     if (!stored) { router.replace("/"); return; }
-    const data = JSON.parse(stored) as GeneratedProposal & { editedHTML?: Record<string, string> };
+    const data = JSON.parse(stored) as GeneratedProposal & { editedHTML?: EditedSections };
     setProposal(data);
   }, [router]);
 
-  // Set initial HTML via refs — NOT via dangerouslySetInnerHTML — so React
-  // never overwrites user edits on re-render (setSaved, etc.)
+  // Build the memo layout once from the AI content (or saved edits)
   useEffect(() => {
     if (!proposal) return;
-    const src = (proposal as GeneratedProposal & { editedHTML?: Record<string, string> }).editedHTML;
-    if (phase1Ref.current)
-      phase1Ref.current.innerHTML = src?.phase1 ?? formatContent(proposal.content.phase1);
-    if (phase2Ref.current)
-      phase2Ref.current.innerHTML = src?.phase2 ?? formatContent(proposal.content.phase2);
-    if (additionalRef.current)
-      additionalRef.current.innerHTML = src?.additional ?? formatContent(proposal.content.additional);
-    if (feeRef.current)
-      feeRef.current.innerHTML = src?.feeStructure ?? formatContent(proposal.content.feeStructure);
-    if (closingRef.current)
-      closingRef.current.innerHTML = src?.closingNote ?? (proposal.content.closingNote ? `<p>${cleanText(proposal.content.closingNote)}</p>` : "");
+    const src = (proposal as GeneratedProposal & { editedHTML?: EditedSections }).editedHTML;
+    const initial: EditedSections = src ?? {
+      phase1: formatContent(proposal.content.phase1),
+      phase2: formatContent(proposal.content.phase2),
+      additional: formatContent(proposal.content.additional),
+      feeStructure: formatContent(proposal.content.feeStructure),
+      closingNote: proposal.content.closingNote ? `<p>${cleanText(proposal.content.closingNote)}</p>` : "",
+    };
+    const m = buildProposalModel(proposal, initial, SERVICE_LABELS);
+    setLayout(m);
+    setHeaderHTML(memoHeaderHTML(m));
   }, [proposal]);
 
-  function getEditedHTML() {
-    return {
-      phase1: phase1Ref.current?.innerHTML || "",
-      phase2: phase2Ref.current?.innerHTML || "",
-      additional: additionalRef.current?.innerHTML || "",
-      feeStructure: feeRef.current?.innerHTML || "",
-      closingNote: closingRef.current?.innerHTML || "",
-    };
+  // Fill the editable regions via refs (NOT dangerouslySetInnerHTML) so React
+  // never overwrites Leo's edits on re-render
+  useEffect(() => {
+    if (!layout) return;
+    for (const s of layout.sections) {
+      const body = bodyRefs.current[s.key];
+      const title = titleRefs.current[s.key];
+      if (body) body.innerHTML = blocksHTML(s.blocks);
+      if (title) title.textContent = s.title;
+    }
+    if (closingRef.current) closingRef.current.innerHTML = closingHTML(layout);
+  }, [layout]);
+
+  function getEditedHTML(): EditedSections {
+    const edited: EditedSections = { phase1: "", phase2: "", additional: "", feeStructure: "", closingNote: "", titles: {} };
+    for (const key of SECTION_KEYS) {
+      edited[key] = bodyRefs.current[key]?.innerHTML || "";
+      const t = titleRefs.current[key]?.textContent?.trim();
+      if (t) edited.titles![key] = t;
+    }
+    edited.closingNote = closingRef.current?.innerHTML || "";
+    return edited;
+  }
+
+  // Investment row in the header follows edits to the fee section
+  function refreshHeader() {
+    if (!proposal) return;
+    setHeaderHTML(memoHeaderHTML(buildProposalModel(proposal, getEditedHTML(), SERVICE_LABELS)));
   }
 
   function handleSave() {
@@ -186,20 +230,13 @@ export default function ProposalPage() {
     );
   }
 
-  const { content, formData, template, generatedAt } = proposal;
-  const date = new Date(generatedAt).toLocaleDateString(
-    formData.language === "spanish" ? "es-ES" : "en-US",
-    { year: "numeric", month: "long", day: "numeric" }
-  );
+  const { formData, template } = proposal;
   const isSpanish = formData.language === "spanish";
 
-  const sectionClass = "bg-white rounded-lg mb-4 overflow-hidden shadow-sm";
-  const sectionHeaderClass = "px-6 py-3 border-b border-[#E8EAF0] flex items-center gap-2";
-  const sectionLabelClass = "text-[10px] font-bold uppercase tracking-widest text-[#1B2035]/40";
-  const editableClass = "px-6 py-5 text-sm text-[#1B2035] leading-relaxed focus:outline-none min-h-[60px] [&_p]:mb-2 [&_ul]:list-none [&_li]:pl-4 [&_li]:relative [&_.zn-list_li]:before:content-[''] [&_.zn-list_li]:before:absolute [&_.zn-list_li]:before:left-0 [&_.zn-list_li]:before:top-[10px] [&_.zn-list_li]:before:w-[5px] [&_.zn-list_li]:before:h-[5px] [&_.zn-list_li]:before:bg-[#DFF266] [&_.zn-list_li]:before:rounded-full [&_.zn-label]:font-bold [&_.zn-label]:text-[#1B2035]";
-
   return (
-    <div className="min-h-screen bg-[#E8EAF0]">
+    <div className="min-h-screen bg-[#E6E8EE]">
+      <link rel="stylesheet" href={MEMO_FONTS_HREF} />
+      <style>{MEMO_CSS + EDITOR_CSS}</style>
       {/* Top bar */}
       <header className="bg-[#1B2035] px-6 py-3 flex items-center justify-between sticky top-0 z-50">
         <div className="flex items-center gap-4">
@@ -265,103 +302,45 @@ export default function ProposalPage() {
         </div>
       </header>
 
-      <div className="max-w-3xl mx-auto px-4 py-8">
-        {/* Proposal header (non-editable) */}
-        <div className="bg-[#1B2035] rounded-lg mb-4 overflow-hidden shadow-sm">
-          <div className="p-8">
-            <div className="flex items-center justify-between mb-6">
-              <Image src="/zinnia-logo-white.svg" alt="Zinnia" width={120} height={24} />
-              <span className="text-white/25 text-[10px] uppercase tracking-widest">
-                {isSpanish ? "Estrictamente Confidencial" : "Strictly Confidential"}
-              </span>
-            </div>
-            <div className="text-white/40 text-[10px] uppercase tracking-widest mb-1">
-              {isSpanish ? "Preparado para:" : "Prepared for:"}
-            </div>
-            <div className="text-[#DFF266] text-3xl font-bold mb-3">{formData.prospectName}</div>
-            <div className="text-white/40 text-xs">{date}{formData.websiteUrl ? ` | ${formData.websiteUrl}` : ""}</div>
-          </div>
-          <div className="bg-[#2A3150] px-8 py-3 flex flex-wrap gap-2 items-center">
-            <span className="text-white/25 text-[10px] uppercase tracking-widest mr-1">
-              {isSpanish ? "Servicios:" : "Services:"}
-            </span>
-            {formData.services.map((s) => (
-              <span key={s} className="bg-[#DFF266]/10 text-[#DFF266] text-[10px] px-2 py-1 rounded font-medium">
-                {SERVICE_LABELS[s]}
-              </span>
+      <div className="px-4 py-8 overflow-x-auto">
+        <p className="text-center text-[12px] text-[#1B2035]/55 mb-4">
+          {isSpanish
+            ? "Así se imprime y se descarga. Haz clic en cualquier título o texto para editarlo."
+            : "This is exactly how it prints and downloads. Click any heading or text to edit it."}
+        </p>
+
+        {layout && (
+          <main className="memo editing" onInput={refreshHeader}>
+            <div dangerouslySetInnerHTML={{ __html: headerHTML }} />
+            {layout.sections.map((s) => (
+              <section key={s.key} className={`sec ${s.kind}`}>
+                <div className="gut">
+                  <div className="num">{s.num}</div>
+                  <div className="gl">{s.gutter}</div>
+                </div>
+                <h2
+                  ref={(el) => { titleRefs.current[s.key] = el; }}
+                  contentEditable
+                  suppressContentEditableWarning
+                  onKeyDown={(e) => { if (e.key === "Enter") e.preventDefault(); }}
+                />
+                <div
+                  className="body"
+                  ref={(el) => { bodyRefs.current[s.key] = el; }}
+                  contentEditable
+                  suppressContentEditableWarning
+                />
+              </section>
             ))}
-            {formData.customService?.trim() && (
-              <span className="bg-[#DFF266]/10 text-[#DFF266] text-[10px] px-2 py-1 rounded font-medium">
-                {formData.customService}
-              </span>
+            {layout.closing.length > 0 && (
+              <section className="closing">
+                <div ref={closingRef} contentEditable suppressContentEditableWarning />
+                <div dangerouslySetInnerHTML={{ __html: signHTML(layout) }} />
+              </section>
             )}
-          </div>
-        </div>
-
-        {/* Edit hint */}
-        <div className="mb-4 px-1">
-          <span className="text-[11px] text-[#1B2035]/40">
-            Click on any section below to edit directly before downloading.
-          </span>
-        </div>
-
-        {/* Editable sections — HTML set via useEffect, NOT dangerouslySetInnerHTML */}
-        <div className={sectionClass}>
-          <div className={sectionHeaderClass}>
-            <span className={sectionLabelClass}>
-              {isSpanish ? "Fase 1: Alineación Estratégica de Marca" : "Phase 1: Essential Brand Strategy Alignment"}
-            </span>
-          </div>
-          <div ref={phase1Ref} contentEditable suppressContentEditableWarning className={editableClass} />
-        </div>
-
-        <div className={sectionClass}>
-          <div className={sectionHeaderClass}>
-            <span className={sectionLabelClass}>
-              {isSpanish ? "Fase 2: Posicionamiento en LinkedIn" : "Phase 2: LinkedIn Positioning Essentials"}
-            </span>
-          </div>
-          <div ref={phase2Ref} contentEditable suppressContentEditableWarning className={editableClass} />
-        </div>
-
-        {content.additional?.trim() && (
-          <div className={sectionClass}>
-            <div className={sectionHeaderClass}>
-              <span className={sectionLabelClass}>
-                {isSpanish ? "Servicios Adicionales" : "Additional Essentials"}
-              </span>
-            </div>
-            <div ref={additionalRef} contentEditable suppressContentEditableWarning className={editableClass} />
-          </div>
+            <div dangerouslySetInnerHTML={{ __html: screenFooterHTML(layout) }} />
+          </main>
         )}
-
-        <div className={sectionClass}>
-          <div className={sectionHeaderClass}>
-            <span className={sectionLabelClass}>
-              {isSpanish ? "Estructura de Honorarios" : "Fee Structure & Breakdown"}
-            </span>
-          </div>
-          <div ref={feeRef} contentEditable suppressContentEditableWarning className={`${editableClass} bg-[#F7F8FC]`} />
-        </div>
-
-        {content.closingNote?.trim() && (
-          <div className="bg-[#1B2035] rounded-lg mb-4 px-6 py-5">
-            <div
-              ref={closingRef}
-              contentEditable
-              suppressContentEditableWarning
-              className="text-sm text-white/70 leading-relaxed focus:outline-none"
-            />
-          </div>
-        )}
-
-        {/* Footer */}
-        <div className="bg-[#1B2035] rounded-lg px-6 py-4 flex items-center justify-between">
-          <span className="text-white/25 text-[10px] uppercase tracking-widest">Zinnia Group © {new Date().getFullYear()}</span>
-          <a href="mailto:leonardo@zinniagroup.io" className="text-[#DFF266] text-xs">
-            leonardo@zinniagroup.io
-          </a>
-        </div>
 
         {/* Bottom CTA */}
         <div className="mt-6 flex justify-center">
