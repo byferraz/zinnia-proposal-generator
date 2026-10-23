@@ -166,31 +166,62 @@ function sectionTable(s: ProposalModel["sections"][number]): Table {
   });
 }
 
-function metaRow(label: string, value: Paragraph[], invest = false): TableRow {
-  const fill = invest ? { type: ShadingType.CLEAR, color: "auto", fill: NAVY } : undefined;
-  const borders = invest
-    ? { top: hair(NAVY), bottom: hair(NAVY), left: NONE, right: NONE }
-    : { top: hair(), bottom: hair(), left: NONE, right: NONE };
-  const pad = invest ? mm(2.6) : mm(1.8);
-  return new TableRow({
+// Navy header block: title + editable meta rows, one table so it stays together
+function heroTable(m: ProposalModel): Table {
+  const fill = { type: ShadingType.CLEAR, color: "auto", fill: NAVY };
+  const PAD_X = mm(6.5);
+  const LABEL_W = GUTTER_W - PAD_X;
+  const VALUE_W = CONTENT_W - GUTTER_W - PAD_X;
+  const line = { style: BorderStyle.SINGLE, size: 4, color: "3A4160" };
+  const titleRow = new TableRow({
     cantSplit: true,
     children: [
       new TableCell({
-        width: { size: GUTTER_W, type: WidthType.DXA },
-        borders,
+        columnSpan: 2,
         shading: fill,
-        margins: { top: pad, bottom: pad, left: invest ? mm(3) : 0, right: 0 },
-        children: [new Paragraph({ children: [text(label, { size: 19, color: invest ? "B6BCCE" : MUTED })] })],
-      }),
-      new TableCell({
-        width: { size: COL_W, type: WidthType.DXA },
-        borders,
-        shading: fill,
-        margins: { top: pad, bottom: pad, left: 0, right: invest ? mm(3) : 0 },
-        verticalAlign: VerticalAlign.TOP,
-        children: value,
+        borders: noBorders,
+        margins: { top: mm(6), bottom: mm(3), left: PAD_X, right: PAD_X },
+        children: m.title.map((ln, i) =>
+          new Paragraph({
+            spacing: { before: 0, after: i === m.title.length - 1 ? 120 : 0, line: 270 },
+            children: ln.map((r) => text(r.text, { font: HEAD, size: 46, color: r.mark ? LIME : "FFFFFF" })),
+          })),
       }),
     ],
+  });
+  const rows = m.meta.map((r, i) => {
+    const last = i === m.meta.length - 1;
+    const valueRuns = r.chips
+      ? r.chips.flatMap((c, j) => [...(j ? [text("  ", { size: 18, color: "FFFFFF" })] : []), text(`\u00A0${c}\u00A0`, { size: 17, color: "FFFFFF", shade: "343C5E" })])
+      : r.runs.map((x) => text(x.text, { font: x.bold ? BODY_B : BODY, size: 19, color: x.mark ? LIME : "FFFFFF" }));
+    const borders = { top: line, bottom: NONE, left: NONE, right: NONE };
+    const pad = { top: mm(1.8), bottom: last ? mm(4) : mm(1.8) };
+    return new TableRow({
+      cantSplit: true,
+      children: [
+        new TableCell({
+          width: { size: LABEL_W + PAD_X, type: WidthType.DXA },
+          shading: fill,
+          borders,
+          margins: { ...pad, left: PAD_X, right: mm(2) },
+          children: [new Paragraph({ children: [text(r.label, { size: 19, color: "A9AFC4" })] })],
+        }),
+        new TableCell({
+          width: { size: VALUE_W + PAD_X, type: WidthType.DXA },
+          shading: fill,
+          borders,
+          margins: { ...pad, left: 0, right: PAD_X },
+          children: [new Paragraph({ spacing: { line: r.chips ? 300 : 240 }, children: valueRuns })],
+        }),
+      ],
+    });
+  });
+  return new Table({
+    width: { size: CONTENT_W, type: WidthType.DXA },
+    columnWidths: [GUTTER_W, CONTENT_W - GUTTER_W],
+    layout: TableLayoutType.FIXED,
+    borders: tableNoBorders,
+    rows: [titleRow, ...rows],
   });
 }
 
@@ -206,7 +237,6 @@ export async function POST(req: NextRequest) {
   try {
     const { model: m } = (await req.json()) as { model: ProposalModel };
     if (!m?.sections) return NextResponse.json({ error: "Missing proposal model" }, { status: 400 });
-    const L = m.labels;
 
     let logoPng: Buffer | null = null;
     try {
@@ -249,55 +279,16 @@ export async function POST(req: NextRequest) {
               borders: noBorders,
               margins: zeroMargins,
               verticalAlign: VerticalAlign.CENTER,
-              children: [new Paragraph({ alignment: AlignmentType.RIGHT, children: [text(L.conf, { size: 14, color: MUTED, caps: true, spacing: 28 })] })],
+              children: [new Paragraph({ alignment: AlignmentType.RIGHT, children: [text(m.conf, { size: 14, color: MUTED, caps: true, spacing: 28 })] })],
             }),
           ],
         }),
       ],
     });
 
-    const title = [
-      new Paragraph({ spacing: { before: 360, after: 0, line: 270 }, children: [text(L.titleA, { font: HEAD, size: 46 })] }),
-      new Paragraph({
-        spacing: { before: 0, after: 300, line: 270 },
-        children: [text(`${L.titleB} `, { font: HEAD, size: 46 }), text(m.name, { font: HEAD, size: 46, shade: LIME })],
-      }),
-    ];
-
-    const chips: TextRun[] = [];
-    m.services.forEach((s, i) => {
-      if (i) chips.push(text("  ", { size: 18 }));
-      chips.push(text(` ${s} `, { size: 17, shade: "EDEFF4" }));
-    });
-
-    const meta = new Table({
-      width: { size: CONTENT_W, type: WidthType.DXA },
-      columnWidths: [GUTTER_W, COL_W],
-      layout: TableLayoutType.FIXED,
-      borders: tableNoBorders,
-      rows: [
-        metaRow(L.for, [new Paragraph({ children: [text(`${m.name}${m.site ? ` | ${m.site}` : ""}`, { size: 19 })] })]),
-        metaRow(L.by, [new Paragraph({ children: [text(m.preparedBy, { size: 19 })] })]),
-        metaRow(L.date, [new Paragraph({ children: [text(m.date, { size: 19 })] })]),
-        ...(m.services.length ? [metaRow(L.services, [new Paragraph({ spacing: { line: 300 }, children: chips })])] : []),
-        ...(m.investment
-          ? [
-              metaRow(
-                L.invest,
-                [
-                  new Paragraph({ children: [text(m.investment.amount, { font: HEAD, size: 28, color: LIME })] }),
-                  ...(m.investment.detail ? [new Paragraph({ children: [text(m.investment.detail, { size: 18, color: "E4E7EF" })] })] : []),
-                ],
-                true,
-              ),
-            ]
-          : []),
-      ],
-    });
-
     const sections = m.sections.flatMap((s) => [sectionTable(s), new Paragraph({ spacing: { after: 260 }, children: [] })]);
 
-    const closing = m.closing.length
+    const closing = m.closing.length || m.sign.length
       ? [
           new Table({
             width: { size: CONTENT_W, type: WidthType.DXA },
@@ -314,8 +305,10 @@ export async function POST(req: NextRequest) {
                     margins: { top: mm(4.5), bottom: 0, left: 0, right: 0 },
                     children: [
                       ...m.closing.map((r) => new Paragraph({ spacing: { after: 140, line: 300 }, keepLines: true, children: runs(r, 21) })),
-                      new Paragraph({ spacing: { before: 120 }, children: [text(m.preparedBy, { font: BODY_B, size: 19 })] }),
-                      new Paragraph({ children: [text(m.contact, { size: 19, color: MUTED })] }),
+                      ...m.sign.map((ln, i) => new Paragraph({
+                        spacing: { before: i === 0 ? 120 : 0 },
+                        children: ln.map((r) => text(r.text, { font: r.bold ? BODY_B : BODY, size: 19, color: r.bold ? NAVY : MUTED })),
+                      })),
                     ],
                   }),
                 ],
@@ -331,7 +324,7 @@ export async function POST(req: NextRequest) {
           border: { top: { style: BorderStyle.SINGLE, size: 4, color: RULE, space: 6 } },
           tabStops: [{ type: TabStopType.RIGHT, position: CONTENT_W }],
           children: [
-            text(`Zinnia Group | ${L.conf}`, { size: 15, color: MUTED, caps: true, spacing: 10 }),
+            text(`Zinnia Group | ${m.conf}`, { size: 15, color: MUTED, caps: true, spacing: 10 }),
             new TextRun({ text: `\t${m.contact} | `, font: BODY, size: 15, color: MUTED }),
             new TextRun({ children: [PageNumber.CURRENT], font: BODY, size: 15, color: MUTED }),
             new TextRun({ text: " / ", font: BODY, size: 15, color: MUTED }),
@@ -342,7 +335,7 @@ export async function POST(req: NextRequest) {
     });
 
     const doc = new Document({
-      creator: m.preparedBy,
+      creator: "Zinnia Group",
       title: `Zinnia - ${m.name}`,
       fonts,
       styles: { default: { document: { run: { font: BODY, size: 20, color: NAVY } } } },
@@ -374,7 +367,7 @@ export async function POST(req: NextRequest) {
             },
           },
           footers: { default: footer },
-          children: [header, ...title, meta, new Paragraph({ spacing: { after: 200 }, children: [] }), ...sections, ...closing],
+          children: [header, new Paragraph({ spacing: { after: 280 }, children: [] }), heroTable(m), new Paragraph({ spacing: { after: 320 }, children: [] }), ...sections, ...closing],
         },
       ],
     });

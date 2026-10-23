@@ -13,11 +13,15 @@ export interface EditedSections {
   additional: string;
   feeStructure: string;
   closingNote: string;
-  // Section titles edited in the generator (override the AI heading)
+  // Everything else Leo can edit in the generator (overrides the defaults)
   titles?: Partial<Record<SectionKey, string>>;
+  gutters?: Partial<Record<SectionKey, string>>;
+  header?: { conf: string; title: string; rows: { label: string; value: string }[] };
+  sign?: string;
 }
 
-export interface Run { text: string; bold?: boolean }
+export interface Run { text: string; bold?: boolean; mark?: boolean }
+export interface MetaRow { label: string; runs: Run[]; chips: string[] | null }
 export type BlockType = "p" | "sub" | "dur" | "price" | "li";
 export interface Block { type: BlockType; runs: Run[] }
 export interface ModelSection {
@@ -32,14 +36,13 @@ export interface ProposalModel {
   lang: "es" | "en";
   labels: Labels;
   name: string;
-  site: string;
-  date: string;
-  preparedBy: string;
   contact: string;
-  services: string[];
-  investment: { amount: string; detail: string } | null;
+  conf: string;
+  title: Run[][];
+  meta: MetaRow[];
   sections: ModelSection[];
   closing: Run[][];
+  sign: Run[][];
 }
 
 type Labels = typeof LABELS_ES;
@@ -95,24 +98,26 @@ const KEEP_BASE = ["LinkedIn", "Zinnia", "Zinnia Media", "Full Stack", "Essentia
 // Element → runs, keeping bold from <strong>/<b>/.zn-label
 function toRuns(el: Element): Run[] {
   const runs: Run[] = [];
-  const walk = (node: Node, bold: boolean) => {
+  const walk = (node: Node, bold: boolean, mark: boolean) => {
     if (node.nodeType === Node.TEXT_NODE) {
       const text = node.textContent ?? "";
-      if (text) runs.push({ text, bold });
+      if (text) runs.push({ text, bold, mark });
       return;
     }
     if (node.nodeType !== Node.ELEMENT_NODE) return;
     const e = node as Element;
-    if (e.tagName === "BR") { runs.push({ text: " ", bold }); return; }
+    if (e.tagName === "BR") { runs.push({ text: " ", bold, mark }); return; }
+    if (e.classList.contains("row-del") || e.classList.contains("sec-del")) return;
     const b = bold || ["STRONG", "B"].includes(e.tagName) || e.classList.contains("zn-label");
-    e.childNodes.forEach((c) => walk(c, b));
+    const mk = mark || e.tagName === "MARK";
+    e.childNodes.forEach((c) => walk(c, b, mk));
   };
-  el.childNodes.forEach((c) => walk(c, false));
+  el.childNodes.forEach((c) => walk(c, false, false));
   // merge neighbours, clean text, trim ends
   const merged: Run[] = [];
   for (const r of runs) {
     const last = merged[merged.length - 1];
-    if (last && !!last.bold === !!r.bold) last.text += r.text;
+    if (last && !!last.bold === !!r.bold && !!last.mark === !!r.mark) last.text += r.text;
     else merged.push({ ...r });
   }
   merged.forEach((r) => (r.text = cleanText(r.text.replace(/\s+/g, " "))));
@@ -183,15 +188,35 @@ function tidySection(html: string, fallbackTitle: string, dropTitles: string[], 
   return { title, blocks };
 }
 
-function investmentSummary(blocks: Block[], keep: string[]) {
-  const lines = blocks.map((b) => runsText(b.runs));
-  const amountLine = lines.find((l) => AMOUNT_RE.test(l));
-  if (!amountLine) return null;
-  const idx = amountLine.lastIndexOf(":");
-  const plan = idx > 0 ? sentenceCase(amountLine.slice(0, idx).trim(), [...keep, "Fase", "Phase"]) : "";
-  const amount = (idx > 0 ? amountLine.slice(idx + 1) : amountLine).trim().replace(/\.$/, "");
-  const term = lines.find((l) => l !== amountLine && /\b(mes(es)?|months?)\b/i.test(l) && !AMOUNT_RE.test(l));
-  return { amount, detail: [plan, term?.replace(/\.$/, "")].filter(Boolean).join(" | ") };
+// Split editable HTML into lines (Chrome wraps new lines in <div> or uses <br>)
+function htmlLines(html: string): Run[][] {
+  const doc = new DOMParser().parseFromString(`<div id="r">${html}</div>`, "text/html");
+  const root = doc.getElementById("r")!;
+  const lines: Run[][] = [];
+  let current = doc.createElement("span");
+  const flush = () => { const r = toRuns(current); if (r.length) lines.push(r); current = doc.createElement("span"); };
+  root.childNodes.forEach((n) => {
+    const el = n as Element;
+    if (n.nodeType === Node.ELEMENT_NODE && el.tagName === "BR") { flush(); return; }
+    if (n.nodeType === Node.ELEMENT_NODE && ["DIV", "P"].includes(el.tagName)) {
+      flush();
+      htmlLines(el.innerHTML).forEach((l) => lines.push(l));
+      return;
+    }
+    current.appendChild(n.cloneNode(true));
+  });
+  flush();
+  return lines;
+}
+
+function metaFromHTML(label: string, value: string): MetaRow {
+  const doc = new DOMParser().parseFromString(`<div id="r">${value}</div>`, "text/html");
+  const root = doc.getElementById("r")!;
+  const chipEls = root.querySelectorAll(".chip");
+  const chips = chipEls.length
+    ? Array.from(chipEls).map((c) => cleanText((c.textContent ?? "").replace(/\s+/g, " ").trim())).filter(Boolean)
+    : null;
+  return { label: cleanText(label.replace(/\s+/g, " ").trim()), runs: chips ? [] : toRuns(root), chips };
 }
 
 export function buildProposalModel(
@@ -211,31 +236,42 @@ export function buildProposalModel(
     { key: "feeStructure" as const, html: edited.feeStructure, gutter: L.fee, title: L.feet, kind: "fee" as const, drop: [...drop, "estructura de inversión", "investment structure"] },
   ];
   const sections: ModelSection[] = [];
-  let feeBlocks: Block[] = [];
   for (const d of defs) {
     const tidy = tidySection(d.html, d.title, d.drop, keep, d.kind === "fee");
     const blocks = tidy.blocks;
     if (!blocks.length) continue;
     const edTitle = edited.titles?.[d.key]?.trim();
     const title = edTitle ? cleanText(edTitle) : tidy.title;
-    if (d.kind === "fee") feeBlocks = blocks;
-    sections.push({ key: d.key, num: String(sections.length + 1).padStart(2, "0"), gutter: d.gutter, title, kind: d.kind, blocks });
+    const gutter = edited.gutters?.[d.key]?.trim() ? cleanText(edited.gutters[d.key]!.trim()) : d.gutter;
+    sections.push({ key: d.key, num: String(sections.length + 1).padStart(2, "0"), gutter, title, kind: d.kind, blocks });
   }
+  const site = p.formData.websiteUrl.trim().replace(/^https?:\/\//, "").replace(/\/$/, "");
+  const date = new Date(p.generatedAt).toLocaleDateString(es ? "es-ES" : "en-US", { year: "numeric", month: "long", day: "numeric" });
+  const services = [
+    ...p.formData.services.map((s) => serviceLabels[s] || s),
+    ...(p.formData.customService?.trim() ? [p.formData.customService.trim()] : []),
+  ];
+  const preparedBy = `${AUTHOR} | Zinnia Group`;
+  const h = edited.header;
+  const meta: MetaRow[] = h
+    ? h.rows.map((r) => metaFromHTML(r.label, r.value)).filter((r) => r.label || r.runs.length || r.chips?.length)
+    : [
+        { label: L.for, runs: [{ text: `${name}${site ? ` | ${site}` : ""}` }], chips: null },
+        { label: L.by, runs: [{ text: preparedBy }], chips: null },
+        { label: L.date, runs: [{ text: date }], chips: null },
+        ...(services.length ? [{ label: L.services, runs: [], chips: services }] : []),
+      ];
   return {
     lang: es ? "es" : "en",
     labels: L,
     name,
-    site: p.formData.websiteUrl.trim().replace(/^https?:\/\//, "").replace(/\/$/, ""),
-    date: new Date(p.generatedAt).toLocaleDateString(es ? "es-ES" : "en-US", { year: "numeric", month: "long", day: "numeric" }),
-    preparedBy: `${AUTHOR} | Zinnia Group`,
     contact: CONTACT,
-    services: [
-      ...p.formData.services.map((s) => serviceLabels[s] || s),
-      ...(p.formData.customService?.trim() ? [p.formData.customService.trim()] : []),
-    ],
-    investment: investmentSummary(feeBlocks, keep),
+    conf: h ? cleanText(h.conf.trim()) : L.conf,
+    title: h ? htmlLines(h.title) : [[{ text: L.titleA }], [{ text: `${L.titleB} ` }, { text: name, mark: true }]],
+    meta,
     sections,
     closing: extractBlocks(edited.closingNote).map((b) => b.runs),
+    sign: edited.sign !== undefined ? htmlLines(edited.sign) : [[{ text: preparedBy, bold: true }], [{ text: CONTACT }]],
   };
 }
 
@@ -243,7 +279,16 @@ export function buildProposalModel(
 
 const LOGO_DARK = `<svg width="112" height="22" viewBox="0 0 160 32" fill="none" xmlns="http://www.w3.org/2000/svg" aria-label="Zinnia"><path d="M37.3379 28.6284V26.0841L56.7583 4.85914L58.4097 6.19825H37.47V3.52002H59.6648V6.03086L40.2443 27.2893L38.7581 25.9502H59.7639V28.6284H37.3379Z" fill="#1B2035"/><path d="M62.3377 3.52002H65.4423V28.6284H62.3377V3.52002Z" fill="#1B2035"/><path d="M92.6372 27.055L91.1179 27.1554V3.52002H94.1235V28.6284H90.1271L71.2682 4.99305L72.7874 4.89261V28.6284H69.7819V3.52002H73.8113L92.6372 27.055Z" fill="#1B2035"/><path d="M121.304 27.055L119.785 27.1554V3.52002H122.791V28.6284H118.794L99.9354 4.99305L101.455 4.89261V28.6284H98.4491V3.52002H102.479L121.304 27.055Z" fill="#1B2035"/><path d="M127.116 3.52002H130.221V28.6284H127.116V3.52002Z" fill="#1B2035"/><path d="M137.104 22.4016V19.7233H154.542V22.4016H137.104ZM147.772 3.52002L159.959 28.6284H156.59L145.129 4.59131H146.781L135.287 28.6284H131.918L144.106 3.52002H147.772Z" fill="#1B2035"/><path d="M10.9386 11.7915L19.3035 3.27539H27.6684V11.7915L19.3035 20.3077V11.7915H10.9386Z" fill="#1B2035"/><path d="M19.3035 20.3077H27.6684V28.8238H19.3035V20.3077Z" fill="#1B2035"/><path d="M10.9386 11.7915L2.57373 20.3077V28.8238H10.9386L19.3035 20.3077H10.9386V11.7915Z" fill="#1B2035"/><path d="M10.9386 11.7915H2.57373V3.27539H10.9386V11.7915Z" fill="#1B2035"/></svg>`;
 
-const runsHTML = (runs: Run[]) => runs.map((r) => (r.bold ? `<strong>${esc(r.text)}</strong>` : esc(r.text))).join("");
+const runsHTML = (runs: Run[]) =>
+  runs
+    .map((r) => {
+      let h = esc(r.text);
+      if (r.bold) h = `<strong>${h}</strong>`;
+      if (r.mark) h = `<mark>${h}</mark>`;
+      return h;
+    })
+    .join("");
+const linesHTML = (lines: Run[][]) => lines.map(runsHTML).join("<br>");
 
 export function blocksHTML(blocks: Block[]): string {
   const out: string[] = [];
@@ -276,20 +321,19 @@ export const MEMO_CSS = `
   width:210mm; min-height:297mm; margin:0 auto; background:#fff; padding:16mm 18mm 18mm; box-shadow:0 1px 2px rgba(27,32,53,.08), 0 8px 28px rgba(27,32,53,.10); display:flex; flex-direction:column; }
 .memo * { margin:0; padding:0; box-sizing:border-box; -webkit-print-color-adjust:exact; print-color-adjust:exact; }
 .memo ::selection { background:var(--lime); color:var(--navy); }
-.memo h1, .memo h2, .memo .num, .memo .sub, .memo .amt, .memo .price { font-family:'Space Grotesk',system-ui,sans-serif; }
+.memo h1, .memo h2, .memo .num, .memo .sub, .memo .price { font-family:'Space Grotesk',system-ui,sans-serif; }
 .memo .top { display:flex; justify-content:space-between; align-items:center; margin-bottom:24px; }
 .memo .conf { font-size:9.5px; letter-spacing:.14em; text-transform:uppercase; color:var(--mut); }
 .memo h1 { font-size:31px; line-height:1.12; font-weight:600; letter-spacing:-.015em; margin-bottom:20px; text-wrap:balance; }
-.memo h1 mark { background:linear-gradient(transparent 60%, var(--lime) 60%); color:inherit; padding:0 2px; -webkit-box-decoration-break:clone; box-decoration-break:clone; }
-.memo table.meta { width:100%; border-collapse:collapse; font-size:12.5px; margin-bottom:30px; }
-.memo .meta td { padding:7px 0; border-top:1px solid var(--rule); vertical-align:top; }
-.memo .meta tr:last-child td { border-bottom:1px solid var(--rule); }
-.memo .meta td.k { width:128px; color:var(--mut); }
-.memo .chip { display:inline-block; border:1px solid #C6CBD9; border-radius:3px; padding:0 7px; margin:1px 4px 3px 0; font-size:11.5px; }
-.memo .meta tr.inv td { background:var(--navy); color:#fff; border-color:var(--navy); padding:10px 0; }
-.memo .meta tr.inv td.k { color:#B6BCCE; padding-left:12px; }
-.memo .inv .amt { display:block; font-size:19px; font-weight:600; line-height:1.25; color:var(--lime); white-space:nowrap; }
-.memo .inv .plan { font-size:12px; color:#E4E7EF; }
+.memo .hero { background:var(--navy); color:#fff; border-radius:8px; padding:24px 26px 12px; margin-bottom:32px; }
+.memo .hero h1 { color:#fff; margin-bottom:18px; }
+.memo .hero h1 mark { background:none; color:var(--lime); padding:0; }
+.memo table.meta { width:100%; border-collapse:collapse; font-size:12.5px; }
+.memo .meta td { padding:7px 0; border-top:1px solid rgba(255,255,255,.13); vertical-align:top; }
+.memo .meta td.k { width:102px; color:#A9AFC4; padding-right:10px; }
+.memo .meta td.v { color:#fff; }
+.memo .meta td.x { width:0; padding:0; position:relative; }
+.memo .chip { display:inline-block; border:1px solid rgba(255,255,255,.3); border-radius:3px; padding:0 7px; margin:1px 4px 3px 0; font-size:11.5px; color:#fff; }
 .memo .sec { position:relative; padding-left:128px; margin-bottom:26px; }
 .memo .gut { position:absolute; left:0; top:0; }
 .memo .num { font-size:38px; font-weight:600; line-height:.95; letter-spacing:-.02em; }
@@ -307,33 +351,36 @@ export const MEMO_CSS = `
 .memo .closing { margin-top:8px; padding:18px 0 0 128px; border-top:1px solid var(--navy); }
 .memo .closing p { font-size:13.5px; line-height:1.65; margin-bottom:8px; }
 .memo .sign { margin-top:12px; font-size:12px; color:var(--mut); line-height:1.5; }
-.memo .sign b { color:var(--navy); font-weight:600; }
+.memo .sign strong { color:var(--navy); font-weight:600; }
 .memo .foot { margin-top:auto; padding-top:28px; }
 .memo .foot div { display:flex; justify-content:space-between; border-top:1px solid var(--rule); padding-top:8px; font-size:8pt; color:var(--mut); }
 .memo .foot span:first-child { letter-spacing:.06em; text-transform:uppercase; }
 `;
 
-export function memoHeaderHTML(m: ProposalModel): string {
-  const L = m.labels;
-  return `<header class="top">${LOGO_DARK}<div class="conf">${L.conf}</div></header>
-  <h1>${L.titleA}<br>${L.titleB} <mark>${esc(m.name)}</mark></h1>
-  <table class="meta">
-    <tr><td class="k">${L.for}</td><td>${esc(m.name)}${m.site ? ` | ${esc(m.site)}` : ""}</td></tr>
-    <tr><td class="k">${L.by}</td><td>${esc(m.preparedBy)}</td></tr>
-    <tr><td class="k">${L.date}</td><td>${esc(m.date)}</td></tr>
-    ${m.services.length ? `<tr><td class="k">${L.services}</td><td>${m.services.map((s) => `<span class="chip">${esc(s)}</span>`).join("")}</td></tr>` : ""}
-    ${m.investment ? `<tr class="inv"><td class="k">${L.invest}</td><td><span class="amt">${esc(m.investment.amount)}</span><span class="plan">${esc(m.investment.detail)}</span></td></tr>` : ""}
-  </table>`;
+// editable=true adds contenteditable + row delete buttons for the generator
+export function memoHeaderHTML(m: ProposalModel, editable = false): string {
+  const ce = editable ? ' contenteditable="true" spellcheck="false"' : "";
+  const rows = m.meta
+    .map((r) => {
+      const value = r.chips ? r.chips.map((c) => `<span class="chip">${esc(c)}</span>`).join("") : runsHTML(r.runs);
+      const del = editable ? `<td class="x"><button type="button" class="row-del" title="Eliminar fila" contenteditable="false">&times;</button></td>` : "";
+      return `<tr><td class="k"${ce}>${esc(r.label)}</td><td class="v"${ce}>${value}</td>${del}</tr>`;
+    })
+    .join("");
+  return `<header class="top">${LOGO_DARK}<div class="conf"${ce}>${esc(m.conf)}</div></header>
+  <div class="hero">
+    <h1${ce}>${linesHTML(m.title)}</h1>
+    ${rows ? `<table class="meta">${rows}</table>` : ""}
+  </div>`;
 }
 
-export const signHTML = (m: ProposalModel) => `<div class="sign"><b>${esc(m.preparedBy)}</b><br>${m.contact}</div>`;
+export const signHTML = (m: ProposalModel) => linesHTML(m.sign);
 
 // On screen only; on paper the same line comes from the @page margin boxes
 export const screenFooterHTML = (m: ProposalModel) =>
-  `<div class="foot"><div><span>Zinnia Group | ${m.labels.conf}</span><span>${m.contact}</span></div></div>`;
+  `<div class="foot"><div><span>Zinnia Group | ${esc(m.conf)}</span><span>${m.contact}</span></div></div>`;
 
 export function buildPrintHTML(m: ProposalModel): string {
-  const L = m.labels;
   const sectionHTML = m.sections
     .map((s) => `<section class="sec ${s.kind}">
   <div class="gut"><div class="num">${s.num}</div><div class="gl">${esc(s.gutter)}</div></div>
@@ -358,7 +405,7 @@ ${MEMO_CSS}
   @top-left { content:""; }
   @top-center { content:""; }
   @top-right { content:""; }
-  @bottom-left { content:"Zinnia Group | ${L.conf}"; font-family:'Geist',sans-serif; font-size:8pt; letter-spacing:.06em; color:#565C72; text-transform:uppercase; vertical-align:top; padding-top:4mm; border-top:0.75pt solid #E3E6EE; }
+  @bottom-left { content:"Zinnia Group | ${m.conf.replace(/["\\]/g, "")}"; font-family:'Geist',sans-serif; font-size:8pt; letter-spacing:.06em; color:#565C72; text-transform:uppercase; vertical-align:top; padding-top:4mm; border-top:0.75pt solid #E3E6EE; }
   @bottom-right { content:"${m.contact} | " counter(page) " / " counter(pages); font-family:'Geist',sans-serif; font-size:8pt; color:#565C72; vertical-align:top; padding-top:4mm; border-top:0.75pt solid #E3E6EE; }
 }
 @media print {
@@ -366,7 +413,7 @@ ${MEMO_CSS}
   body { padding:0; }
   .memo { width:auto; min-height:0; margin:0; padding:0; box-shadow:none; display:block; }
   .memo .foot { display:none; }
-  .memo .top, .memo table.meta, .memo .meta tr, .memo h2, .memo .gut { break-inside:avoid; }
+  .memo .top, .memo .hero, .memo h2, .memo .gut { break-inside:avoid; }
   .memo h2, .memo .sub { break-after:avoid; }
   .memo .body li, .memo .body p { break-inside:avoid; orphans:3; widows:3; }
   .memo .fee .body { break-inside:avoid; }
@@ -378,7 +425,7 @@ ${MEMO_CSS}
 <main class="memo">
   ${memoHeaderHTML(m)}
 ${sectionHTML}
-  ${m.closing.length ? `<section class="closing">${closingHTML(m)}${signHTML(m)}</section>` : ""}
+  ${m.closing.length || m.sign.length ? `<section class="closing">${closingHTML(m)}${m.sign.length ? `<div class="sign">${signHTML(m)}</div>` : ""}</section>` : ""}
   ${screenFooterHTML(m)}
 </main>
 </body>

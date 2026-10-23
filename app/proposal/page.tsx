@@ -24,10 +24,19 @@ import {
 
 // Editing affordances on top of the shared memo styles (screen only)
 const EDITOR_CSS = `
-.memo.editing [contenteditable] { outline:none; border-radius:3px; transition:box-shadow .15s ease-out; cursor:text; }
-.memo.editing [contenteditable]:hover { box-shadow:0 0 0 5px #fff, 0 0 0 6px rgba(27,32,53,.14); }
-.memo.editing [contenteditable]:focus { box-shadow:0 0 0 5px #fff, 0 0 0 7px #C9D94F; }
-.memo.editing .fee .body[contenteditable]:hover, .memo.editing .fee .body[contenteditable]:focus { box-shadow:0 0 0 2px #C9D94F; }
+.memo.editing [contenteditable="true"] { outline:none; border-radius:3px; transition:box-shadow .15s ease-out; cursor:text; }
+.memo.editing [contenteditable="true"]:hover { box-shadow:0 0 0 4px #fff, 0 0 0 5px rgba(27,32,53,.16); }
+.memo.editing [contenteditable="true"]:focus { box-shadow:0 0 0 4px #fff, 0 0 0 6px #C9D94F; }
+.memo.editing .hero [contenteditable="true"]:hover { box-shadow:0 0 0 3px var(--navy), 0 0 0 4px rgba(255,255,255,.3); }
+.memo.editing .hero [contenteditable="true"]:focus { box-shadow:0 0 0 3px var(--navy), 0 0 0 5px var(--lime); }
+.memo.editing .fee .body[contenteditable="true"]:hover, .memo.editing .fee .body[contenteditable="true"]:focus { box-shadow:0 0 0 2px #C9D94F; }
+.memo.editing .row-del, .memo.editing .sec-del { position:absolute; width:22px; height:22px; border-radius:50%; border:0; font:500 15px/22px system-ui; text-align:center; cursor:pointer; opacity:0; transition:opacity .15s ease-out, background-color .15s; }
+.memo.editing .row-del { left:6px; top:6px; background:rgba(255,255,255,.12); color:#fff; }
+.memo.editing .row-del:hover { background:#E5484D; }
+.memo.editing tr:hover .row-del, .memo.editing .row-del:focus-visible { opacity:1; }
+.memo.editing .sec-del { left:-34px; top:2px; background:#E6E8EE; color:var(--navy); }
+.memo.editing .sec-del:hover { background:#E5484D; color:#fff; }
+.memo.editing .sec:hover .sec-del, .memo.editing .sec-del:focus-visible { opacity:1; }
 `;
 
 const SECTION_KEYS: SectionKey[] = ["phase1", "phase2", "additional", "feeStructure"];
@@ -80,7 +89,10 @@ export default function ProposalPage() {
   const [downloading, setDownloading] = useState<"pdf" | "word" | null>(null);
 
   const [layout, setLayout] = useState<ProposalModel | null>(null);
-  const [headerHTML, setHeaderHTML] = useState("");
+  const [removed, setRemoved] = useState<SectionKey[]>([]);
+  const headerRef = useRef<HTMLDivElement>(null);
+  const gutterRefs = useRef<Partial<Record<SectionKey, HTMLDivElement | null>>>({});
+  const signRef = useRef<HTMLDivElement>(null);
   const bodyRefs = useRef<Partial<Record<SectionKey, HTMLDivElement | null>>>({});
   const titleRefs = useRef<Partial<Record<SectionKey, HTMLHeadingElement | null>>>({});
   const closingRef = useRef<HTMLDivElement>(null);
@@ -105,7 +117,6 @@ export default function ProposalPage() {
     };
     const m = buildProposalModel(proposal, initial, SERVICE_LABELS);
     setLayout(m);
-    setHeaderHTML(memoHeaderHTML(m));
   }, [proposal]);
 
   // Fill the editable regions via refs (NOT dangerouslySetInnerHTML) so React
@@ -117,25 +128,52 @@ export default function ProposalPage() {
       const title = titleRefs.current[s.key];
       if (body) body.innerHTML = blocksHTML(s.blocks);
       if (title) title.textContent = s.title;
+      const gutter = gutterRefs.current[s.key];
+      if (gutter) gutter.textContent = s.gutter;
     }
+    if (headerRef.current) headerRef.current.innerHTML = memoHeaderHTML(layout, true);
     if (closingRef.current) closingRef.current.innerHTML = closingHTML(layout);
+    if (signRef.current) signRef.current.innerHTML = signHTML(layout);
   }, [layout]);
 
   function getEditedHTML(): EditedSections {
-    const edited: EditedSections = { phase1: "", phase2: "", additional: "", feeStructure: "", closingNote: "", titles: {} };
+    const edited: EditedSections = {
+      phase1: "", phase2: "", additional: "", feeStructure: "", closingNote: "",
+      titles: {}, gutters: {},
+    };
     for (const key of SECTION_KEYS) {
+      if (removed.includes(key)) continue;
       edited[key] = bodyRefs.current[key]?.innerHTML || "";
       const t = titleRefs.current[key]?.textContent?.trim();
       if (t) edited.titles![key] = t;
+      const g = gutterRefs.current[key]?.textContent?.trim();
+      if (g) edited.gutters![key] = g;
     }
     edited.closingNote = closingRef.current?.innerHTML || "";
+    if (signRef.current) edited.sign = signRef.current.innerHTML;
+    const head = headerRef.current;
+    if (head) {
+      edited.header = {
+        conf: head.querySelector(".conf")?.textContent ?? "",
+        title: head.querySelector("h1")?.innerHTML ?? "",
+        rows: Array.from(head.querySelectorAll("table.meta tr")).map((tr) => ({
+          label: tr.querySelector("td.k")?.textContent ?? "",
+          value: tr.querySelector("td.v")?.innerHTML ?? "",
+        })),
+      };
+    }
     return edited;
   }
 
-  // Investment row in the header follows edits to the fee section
-  function refreshHeader() {
-    if (!proposal) return;
-    setHeaderHTML(memoHeaderHTML(buildProposalModel(proposal, getEditedHTML(), SERVICE_LABELS)));
+  // Header block is plain HTML (set once): handle row delete + Enter keys here
+  function onHeaderClick(e: React.MouseEvent) {
+    const btn = (e.target as HTMLElement).closest(".row-del");
+    if (btn) btn.closest("tr")?.remove();
+  }
+  function onHeaderKeyDown(e: React.KeyboardEvent) {
+    if (e.key !== "Enter") return;
+    e.preventDefault();
+    if ((e.target as HTMLElement).tagName === "H1") document.execCommand("insertLineBreak");
   }
 
   function handleSave() {
@@ -310,13 +348,27 @@ export default function ProposalPage() {
         </p>
 
         {layout && (
-          <main className="memo editing" onInput={refreshHeader}>
-            <div dangerouslySetInnerHTML={{ __html: headerHTML }} />
-            {layout.sections.map((s) => (
+          <main className="memo editing">
+            <div ref={headerRef} onClick={onHeaderClick} onKeyDown={onHeaderKeyDown} />
+            {layout.sections.filter((s) => !removed.includes(s.key)).map((s, i) => (
               <section key={s.key} className={`sec ${s.kind}`}>
+                <button
+                  type="button"
+                  className="sec-del"
+                  title={isSpanish ? "Eliminar sección" : "Delete section"}
+                  onClick={() => setRemoved((r) => [...r, s.key])}
+                >
+                  &times;
+                </button>
                 <div className="gut">
-                  <div className="num">{s.num}</div>
-                  <div className="gl">{s.gutter}</div>
+                  <div className="num">{String(i + 1).padStart(2, "0")}</div>
+                  <div
+                    className="gl"
+                    ref={(el) => { gutterRefs.current[s.key] = el; }}
+                    contentEditable
+                    suppressContentEditableWarning
+                    onKeyDown={(e) => { if (e.key === "Enter") e.preventDefault(); }}
+                  />
                 </div>
                 <h2
                   ref={(el) => { titleRefs.current[s.key] = el; }}
@@ -332,10 +384,10 @@ export default function ProposalPage() {
                 />
               </section>
             ))}
-            {layout.closing.length > 0 && (
+            {(layout.closing.length > 0 || layout.sign.length > 0) && (
               <section className="closing">
                 <div ref={closingRef} contentEditable suppressContentEditableWarning />
-                <div dangerouslySetInnerHTML={{ __html: signHTML(layout) }} />
+                <div className="sign" ref={signRef} contentEditable suppressContentEditableWarning />
               </section>
             )}
             <div dangerouslySetInnerHTML={{ __html: screenFooterHTML(layout) }} />
