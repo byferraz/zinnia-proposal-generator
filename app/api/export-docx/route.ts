@@ -372,14 +372,35 @@ export async function POST(req: NextRequest) {
       ],
     });
 
-    // Keep the brand fonts embedded when Leo edits and re-saves in Word
+    // Keep the brand fonts embedded when Leo edits and re-saves in Word.
+    // w:settings children have a fixed schema order: embedTrueTypeFonts must
+    // follow displayBackgroundShape, or Word reports "unreadable content".
     const zip = await JSZip.loadAsync(await Packer.toBuffer(doc));
     const settings = await zip.file("word/settings.xml")?.async("string");
     if (settings && !settings.includes("embedTrueTypeFonts")) {
-      zip.file("word/settings.xml", settings.replace(/(<w:settings[^>]*>)/, "$1<w:embedTrueTypeFonts/>"));
+      const patched = settings.includes("<w:displayBackgroundShape/>")
+        ? settings.replace("<w:displayBackgroundShape/>", "<w:displayBackgroundShape/><w:embedTrueTypeFonts/>")
+        : settings.replace(/(<w:settings[^>]*>)/, "$1<w:embedTrueTypeFonts/>");
+      zip.file("word/settings.xml", patched);
+    }
+    // Font part names with spaces ("fonts/Space Grotesk SemiBold.odttf") are
+    // not valid package names; rename them and fix the relationships
+    const relsPath = "word/_rels/fontTable.xml.rels";
+    let rels = await zip.file(relsPath)?.async("string");
+    if (rels) {
+      const targets = Array.from(rels.matchAll(/Target="(fonts\/[^"]+)"/g)).map((x) => x[1]);
+      for (const [i, target] of targets.entries()) {
+        const file = zip.file(`word/${target}`);
+        if (!file || !/\s/.test(target)) continue;
+        const clean = `fonts/font${i + 1}.odttf`;
+        zip.file(`word/${clean}`, await file.async("uint8array"));
+        zip.remove(`word/${target}`);
+        rels = rels.replace(`Target="${target}"`, `Target="${clean}"`);
+      }
+      zip.file(relsPath, rels);
     }
     const buffer = await zip.generateAsync({ type: "nodebuffer", compression: "DEFLATE" });
-    const slug = m.name.replace(/\s+/g, "-").toLowerCase();
+    const slug = m.name.trim().toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "proposal";
     return new NextResponse(new Uint8Array(buffer), {
       headers: {
         "Content-Type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",

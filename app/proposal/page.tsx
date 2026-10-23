@@ -13,6 +13,7 @@ import {
   buildProposalModel,
   cleanText,
   closingHTML,
+  editableRowHTML,
   memoHeaderHTML,
   printTitle,
   screenFooterHTML,
@@ -37,7 +38,16 @@ const EDITOR_CSS = `
 .memo.editing .sec-del { left:-34px; top:2px; background:#E6E8EE; color:var(--navy); }
 .memo.editing .sec-del:hover { background:#E5484D; color:#fff; }
 .memo.editing .sec:hover .sec-del, .memo.editing .sec-del:focus-visible { opacity:1; }
+.memo.editing .row-add { margin-top:8px; background:none; border:0; color:rgba(255,255,255,.55); font:500 11.5px/1.6 'Geist',system-ui; cursor:pointer; padding:2px 0; }
+.memo.editing .row-add:hover { color:var(--lime); }
+.memo.editing .sec-add { display:block; margin:0 0 26px 128px; width:calc(100% - 128px); padding:10px; border:1px dashed #C6CBD9; border-radius:6px; background:none; color:var(--mut); font:500 12.5px/1.4 'Geist',system-ui; cursor:pointer; transition:border-color .15s, color .15s; }
+.memo.editing .sec-add:hover { border-color:var(--navy); color:var(--navy); }
 `;
+
+type SecItem = { key: string; kind: "phase" | "fee" };
+type SecContent = { num: string; gutter: string; title: string; body: string };
+type SecField = keyof SecContent;
+const pad2 = (n: number) => String(n).padStart(2, "0");
 
 const SECTION_KEYS: SectionKey[] = ["phase1", "phase2", "additional", "feeStructure"];
 
@@ -89,13 +99,15 @@ export default function ProposalPage() {
   const [downloading, setDownloading] = useState<"pdf" | "word" | null>(null);
 
   const [layout, setLayout] = useState<ProposalModel | null>(null);
-  const [removed, setRemoved] = useState<SectionKey[]>([]);
+  const [items, setItems] = useState<SecItem[]>([]);
+  const [undoStack, setUndoStack] = useState<{ label: string; undo: () => void }[]>([]);
   const headerRef = useRef<HTMLDivElement>(null);
-  const gutterRefs = useRef<Partial<Record<SectionKey, HTMLDivElement | null>>>({});
-  const signRef = useRef<HTMLDivElement>(null);
-  const bodyRefs = useRef<Partial<Record<SectionKey, HTMLDivElement | null>>>({});
-  const titleRefs = useRef<Partial<Record<SectionKey, HTMLHeadingElement | null>>>({});
   const closingRef = useRef<HTMLDivElement>(null);
+  const signRef = useRef<HTMLDivElement>(null);
+  // Section DOM nodes and their last known content (used to fill on mount and to undo deletes)
+  const els = useRef<Record<string, Partial<Record<SecField, HTMLElement | null>>>>({});
+  const content = useRef<Record<string, SecContent>>({});
+  const autoNum = useRef<Set<string>>(new Set());
 
   useEffect(() => {
     const stored = sessionStorage.getItem("zinnia_proposal");
@@ -116,38 +128,128 @@ export default function ProposalPage() {
       closingNote: proposal.content.closingNote ? `<p>${cleanText(proposal.content.closingNote)}</p>` : "",
     };
     const m = buildProposalModel(proposal, initial, SERVICE_LABELS);
+    content.current = {};
+    autoNum.current = new Set();
+    m.sections.forEach((sec, i) => {
+      content.current[sec.key] = { num: sec.num, gutter: sec.gutter, title: sec.title, body: blocksHTML(sec.blocks) };
+      if (sec.num === pad2(i + 1)) autoNum.current.add(sec.key);
+    });
+    setItems(m.sections.map((sec) => ({ key: sec.key, kind: sec.kind })));
     setLayout(m);
   }, [proposal]);
 
-  // Fill the editable regions via refs (NOT dangerouslySetInnerHTML) so React
-  // never overwrites Leo's edits on re-render
+  // Header, closing and signature are filled once via refs (NOT
+  // dangerouslySetInnerHTML) so React never overwrites Leo's edits
   useEffect(() => {
     if (!layout) return;
-    for (const s of layout.sections) {
-      const body = bodyRefs.current[s.key];
-      const title = titleRefs.current[s.key];
-      if (body) body.innerHTML = blocksHTML(s.blocks);
-      if (title) title.textContent = s.title;
-      const gutter = gutterRefs.current[s.key];
-      if (gutter) gutter.textContent = s.gutter;
-    }
     if (headerRef.current) headerRef.current.innerHTML = memoHeaderHTML(layout, true);
     if (closingRef.current) closingRef.current.innerHTML = closingHTML(layout);
     if (signRef.current) signRef.current.innerHTML = signHTML(layout);
   }, [layout]);
 
+  // Numbers follow the section order unless Leo typed his own
+  useEffect(() => {
+    items.forEach((it, i) => {
+      if (!autoNum.current.has(it.key)) return;
+      const el = els.current[it.key]?.num;
+      if (el) el.textContent = pad2(i + 1);
+    });
+  }, [items]);
+
+  // Ref callback: fills a section field the first time its node mounts
+  const bind = (key: string, field: SecField) => (el: HTMLElement | null) => {
+    (els.current[key] ??= {})[field] = el;
+    if (!el || el.dataset.filled === "1") return;
+    const c = content.current[key];
+    if (c) {
+      if (field === "body") el.innerHTML = c.body;
+      else el.textContent = c[field];
+    }
+    el.dataset.filled = "1";
+  };
+
+  function snapshot(key: string) {
+    const e = els.current[key];
+    if (!e) return;
+    content.current[key] = {
+      num: e.num?.textContent ?? "",
+      gutter: e.gutter?.textContent ?? "",
+      title: e.title?.textContent ?? "",
+      body: e.body?.innerHTML ?? "",
+    };
+  }
+
+  function pushUndo(label: string, undo: () => void) {
+    setUndoStack((st) => [...st.slice(-19), { label, undo }]);
+  }
+
+  function undoLast() {
+    const last = undoStack[undoStack.length - 1];
+    if (!last) return;
+    last.undo();
+    setUndoStack((st) => st.slice(0, -1));
+  }
+
+  function removeSection(key: string) {
+    snapshot(key);
+    const idx = items.findIndex((it) => it.key === key);
+    const item = items[idx];
+    if (!item) return;
+    setItems((cur) => cur.filter((it) => it.key !== key));
+    const title = content.current[key]?.title || "";
+    pushUndo(
+      isSpanishUI() ? `Sección eliminada: ${title}` : `Section deleted: ${title}`,
+      () => setItems((cur) => { const copy = [...cur]; copy.splice(Math.min(idx, copy.length), 0, item); return copy; }),
+    );
+  }
+
+  function addSection() {
+    const key = `x${Date.now().toString(36)}`;
+    const es = isSpanishUI();
+    content.current[key] = {
+      num: "",
+      gutter: es ? "Adicional" : "Additional",
+      title: es ? "Nueva sección" : "New section",
+      body: `<p>${es ? "Escribe aquí el contenido de la sección." : "Write the section content here."}</p>`,
+    };
+    autoNum.current.add(key);
+    setItems((cur) => [...cur, { key, kind: "phase" }]);
+    setTimeout(() => {
+      const t = els.current[key]?.title;
+      if (!t) return;
+      t.focus();
+      const range = document.createRange();
+      range.selectNodeContents(t);
+      const sel = window.getSelection();
+      sel?.removeAllRanges();
+      sel?.addRange(range);
+    }, 50);
+  }
+
+  function isSpanishUI() {
+    return proposal?.formData.language === "spanish";
+  }
+
   function getEditedHTML(): EditedSections {
     const edited: EditedSections = {
       phase1: "", phase2: "", additional: "", feeStructure: "", closingNote: "",
-      titles: {}, gutters: {},
+      titles: {}, gutters: {}, extra: [], nums: {}, fromEditor: true,
     };
-    for (const key of SECTION_KEYS) {
-      if (removed.includes(key)) continue;
-      edited[key] = bodyRefs.current[key]?.innerHTML || "";
-      const t = titleRefs.current[key]?.textContent?.trim();
-      if (t) edited.titles![key] = t;
-      const g = gutterRefs.current[key]?.textContent?.trim();
-      if (g) edited.gutters![key] = g;
+    for (const it of items) {
+      const e = els.current[it.key];
+      if (!e) continue;
+      const title = e.title?.textContent?.trim() ?? "";
+      const gutter = e.gutter?.textContent?.trim() ?? "";
+      const body = e.body?.innerHTML ?? "";
+      edited.nums![it.key] = e.num?.textContent ?? "";
+      if ((SECTION_KEYS as string[]).includes(it.key)) {
+        const k = it.key as SectionKey;
+        edited[k] = body;
+        if (title) edited.titles![k] = title;
+        if (gutter) edited.gutters![k] = gutter;
+      } else {
+        edited.extra!.push({ id: it.key, title, gutter, body });
+      }
     }
     edited.closingNote = closingRef.current?.innerHTML || "";
     if (signRef.current) edited.sign = signRef.current.innerHTML;
@@ -165,10 +267,27 @@ export default function ProposalPage() {
     return edited;
   }
 
-  // Header block is plain HTML (set once): handle row delete + Enter keys here
+  // Header block is plain HTML (set once): handle row add/delete + Enter keys here
   function onHeaderClick(e: React.MouseEvent) {
-    const btn = (e.target as HTMLElement).closest(".row-del");
-    if (btn) btn.closest("tr")?.remove();
+    const target = e.target as HTMLElement;
+    const del = target.closest(".row-del");
+    if (del) {
+      const tr = del.closest("tr");
+      const parent = tr?.parentNode;
+      if (!tr || !parent) return;
+      const next = tr.nextSibling;
+      const label = tr.querySelector("td.k")?.textContent?.trim() || "";
+      tr.remove();
+      pushUndo(isSpanishUI() ? `Fila eliminada: ${label}` : `Row deleted: ${label}`, () => parent.insertBefore(tr, next));
+      return;
+    }
+    if (target.closest(".row-add")) {
+      const table = headerRef.current?.querySelector("table.meta") as HTMLTableElement | null;
+      if (!table) return;
+      (table.tBodies[0] ?? table).insertAdjacentHTML("beforeend", editableRowHTML());
+      const rows = table.querySelectorAll("tr");
+      (rows[rows.length - 1]?.querySelector("td.k") as HTMLElement | null)?.focus();
+    }
   }
   function onHeaderKeyDown(e: React.KeyboardEvent) {
     if (e.key !== "Enter") return;
@@ -195,7 +314,8 @@ export default function ProposalPage() {
   }
 
   function slug() {
-    return proposal?.formData.prospectName.replace(/\s+/g, "-").toLowerCase() ?? "proposal";
+    const name = proposal?.formData.prospectName ?? "";
+    return name.trim().toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "proposal";
   }
 
   function handleDownloadHTML() {
@@ -350,40 +470,45 @@ export default function ProposalPage() {
         {layout && (
           <main className="memo editing">
             <div ref={headerRef} onClick={onHeaderClick} onKeyDown={onHeaderKeyDown} />
-            {layout.sections.filter((s) => !removed.includes(s.key)).map((s, i) => (
-              <section key={s.key} className={`sec ${s.kind}`}>
+            {items.map((it) => (
+              <section key={it.key} className={`sec ${it.kind}`}>
                 <button
                   type="button"
                   className="sec-del"
                   title={isSpanish ? "Eliminar sección" : "Delete section"}
-                  onClick={() => setRemoved((r) => [...r, s.key])}
+                  onClick={() => removeSection(it.key)}
                 >
                   &times;
                 </button>
                 <div className="gut">
-                  <div className="num">{String(i + 1).padStart(2, "0")}</div>
+                  <div
+                    className="num"
+                    ref={bind(it.key, "num")}
+                    contentEditable
+                    suppressContentEditableWarning
+                    onInput={() => autoNum.current.delete(it.key)}
+                    onKeyDown={(e) => { if (e.key === "Enter") e.preventDefault(); }}
+                  />
                   <div
                     className="gl"
-                    ref={(el) => { gutterRefs.current[s.key] = el; }}
+                    ref={bind(it.key, "gutter")}
                     contentEditable
                     suppressContentEditableWarning
                     onKeyDown={(e) => { if (e.key === "Enter") e.preventDefault(); }}
                   />
                 </div>
                 <h2
-                  ref={(el) => { titleRefs.current[s.key] = el; }}
+                  ref={bind(it.key, "title")}
                   contentEditable
                   suppressContentEditableWarning
                   onKeyDown={(e) => { if (e.key === "Enter") e.preventDefault(); }}
                 />
-                <div
-                  className="body"
-                  ref={(el) => { bodyRefs.current[s.key] = el; }}
-                  contentEditable
-                  suppressContentEditableWarning
-                />
+                <div className="body" ref={bind(it.key, "body")} contentEditable suppressContentEditableWarning />
               </section>
             ))}
+            <button type="button" className="sec-add" onClick={addSection}>
+              + {isSpanish ? "Agregar sección" : "Add section"}
+            </button>
             {(layout.closing.length > 0 || layout.sign.length > 0) && (
               <section className="closing">
                 <div ref={closingRef} contentEditable suppressContentEditableWarning />
@@ -421,6 +546,15 @@ export default function ProposalPage() {
           </div>
         </div>
       </div>
+      {undoStack.length > 0 && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 flex items-center gap-4 bg-[#1B2035] text-white text-sm rounded-lg pl-4 pr-2 py-2 shadow-[0_8px_28px_rgba(27,32,53,.28)]">
+          <span className="max-w-[360px] truncate text-white/80">{undoStack[undoStack.length - 1].label}</span>
+          <button onClick={undoLast} className="px-3 py-1 rounded bg-[#DFF266] text-[#1B2035] font-semibold hover:opacity-90">
+            {isSpanish ? "Deshacer" : "Undo"}{undoStack.length > 1 ? ` (${undoStack.length})` : ""}
+          </button>
+          <button onClick={() => setUndoStack([])} aria-label="Close" className="px-2 text-white/50 hover:text-white">&times;</button>
+        </div>
+      )}
     </div>
   );
 }

@@ -18,6 +18,12 @@ export interface EditedSections {
   gutters?: Partial<Record<SectionKey, string>>;
   header?: { conf: string; title: string; rows: { label: string; value: string }[] };
   sign?: string;
+  // Sections Leo added in the generator, shown after the AI sections
+  extra?: { id: string; title: string; gutter: string; body: string }[];
+  // Section numbers as shown in the generator (Leo can overwrite them)
+  nums?: Record<string, string>;
+  // Content already laid out by the generator: export it exactly as shown
+  fromEditor?: boolean;
 }
 
 export interface Run { text: string; bold?: boolean; mark?: boolean }
@@ -25,7 +31,7 @@ export interface MetaRow { label: string; runs: Run[]; chips: string[] | null }
 export type BlockType = "p" | "sub" | "dur" | "price" | "li";
 export interface Block { type: BlockType; runs: Run[] }
 export interface ModelSection {
-  key: SectionKey;
+  key: string;
   num: string;
   gutter: string;
   title: string;
@@ -156,9 +162,10 @@ function extractBlocks(html: string): Block[] {
   return blocks;
 }
 
-function tidySection(html: string, fallbackTitle: string, dropTitles: string[], keep: string[], fee: boolean) {
+function tidySection(html: string, fallbackTitle: string, dropTitles: string[], keep: string[], fee: boolean, asIs = false) {
   const blocks = extractBlocks(html);
   let title = fallbackTitle;
+  if (asIs) return { title, blocks };
 
   // First paragraph is usually the AI's own heading ("FASE 1: …", "SERVICIOS ADICIONALES")
   const first = blocks[0];
@@ -237,13 +244,23 @@ export function buildProposalModel(
   ];
   const sections: ModelSection[] = [];
   for (const d of defs) {
-    const tidy = tidySection(d.html, d.title, d.drop, keep, d.kind === "fee");
+    const tidy = tidySection(d.html, d.title, d.drop, keep, d.kind === "fee", edited.fromEditor);
     const blocks = tidy.blocks;
     if (!blocks.length) continue;
     const edTitle = edited.titles?.[d.key]?.trim();
     const title = edTitle ? cleanText(edTitle) : tidy.title;
     const gutter = edited.gutters?.[d.key]?.trim() ? cleanText(edited.gutters[d.key]!.trim()) : d.gutter;
     sections.push({ key: d.key, num: String(sections.length + 1).padStart(2, "0"), gutter, title, kind: d.kind, blocks });
+  }
+  for (const x of edited.extra ?? []) {
+    const blocks = extractBlocks(x.body);
+    const title = cleanText(x.title.trim());
+    if (!blocks.length && !title) continue;
+    sections.push({ key: x.id, num: String(sections.length + 1).padStart(2, "0"), gutter: cleanText(x.gutter.trim()), title, kind: "phase", blocks });
+  }
+  for (const sec of sections) {
+    const n = edited.nums?.[sec.key]?.trim();
+    if (n !== undefined) sec.num = cleanText(n);
   }
   const site = p.formData.websiteUrl.trim().replace(/^https?:\/\//, "").replace(/\/$/, "");
   const date = new Date(p.generatedAt).toLocaleDateString(es ? "es-ES" : "en-US", { year: "numeric", month: "long", day: "numeric" });
@@ -370,8 +387,15 @@ export function memoHeaderHTML(m: ProposalModel, editable = false): string {
   return `<header class="top">${LOGO_DARK}<div class="conf"${ce}>${esc(m.conf)}</div></header>
   <div class="hero">
     <h1${ce}>${linesHTML(m.title)}</h1>
-    ${rows ? `<table class="meta">${rows}</table>` : ""}
+    ${rows || editable ? `<table class="meta">${rows}</table>` : ""}
+    ${editable ? `<button type="button" class="row-add" contenteditable="false">+ ${m.lang === "es" ? "Agregar fila" : "Add row"}</button>` : ""}
   </div>`;
+}
+
+// One empty editable header row (generator only)
+export function editableRowHTML(): string {
+  const ce = ' contenteditable="true" spellcheck="false"';
+  return `<tr><td class="k"${ce}></td><td class="v"${ce}></td><td class="x"><button type="button" class="row-del" title="Eliminar fila" contenteditable="false">&times;</button></td></tr>`;
 }
 
 export const signHTML = (m: ProposalModel) => linesHTML(m.sign);
